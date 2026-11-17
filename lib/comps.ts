@@ -241,6 +241,40 @@ export function tiltValue(list: Tilt[], key: string | null): number {
   return list.find((t) => t.key === key)?.value ?? 0;
 }
 
+/**
+ * How much of the evidence the fit may use. Every knob defaults to the fit as first written, so a
+ * caller that carries no options reads the same numbers; a validation carries one to ask how much
+ * each term is worth, and the radar's fit carries the tuned set the validation settled on.
+ */
+export interface FitOptions {
+  /** Tilts are shrunk by n / (n + prior); a larger prior leans harder on the line alone. */
+  category_prior: number;
+  family_prior: number;
+  /** A tilt's value is never read beyond this size, in logs. */
+  tilt_cap: number;
+  /** How far the growth slope may run: a slope is read as dy per unit of g (one whole point). */
+  growth_slope_lo: number;
+  growth_slope_hi: number;
+  /** The hold slope's bounds, and whether the hold line is fitted at all. */
+  hold_lo: number;
+  hold_hi: number;
+  hold_on: boolean;
+  /** The comps' record weight, in the line's first fit and in every later term. */
+  weighting: 'sqrt_half' | 'flat';
+}
+
+export const DEFAULT_OPTIONS: FitOptions = {
+  category_prior: CATEGORY_PRIOR,
+  family_prior: FAMILY_PRIOR,
+  tilt_cap: Infinity,
+  growth_slope_lo: -Infinity,
+  growth_slope_hi: Infinity,
+  hold_lo: 0,
+  hold_hi: 3,
+  hold_on: true,
+  weighting: 'sqrt_half',
+};
+
 export interface Fit {
   line: Line;
   category: Tilt[];
@@ -249,16 +283,22 @@ export interface Fit {
   hold: { a: number; b: number; lo: number; hi: number };
 }
 
+/** A comp's weight under an option's scheme. */
+export function compWeight(c: Comp, weighting: FitOptions['weighting']): number {
+  return weighting === 'flat' ? 1 : c.weight;
+}
+
 /** The line, the tilts, the growth term and the hold term, on one pool of comps. */
-export function fitTerms(comps: Comp[], bounds: { lo: number; hi: number } = { lo: LINE_BEND_LO, hi: LINE_BEND_HI }): Fit {
+export function fitTerms(comps: Comp[], bounds: { lo: number; hi: number } = { lo: LINE_BEND_LO, hi: LINE_BEND_HI }, options: Partial<FitOptions> = {}): Fit {
+  const o: FitOptions = { ...DEFAULT_OPTIONS, ...options };
   const x = comps.map((c) => log(clip(c.tvl_usd, TVL_FLOOR_USD, TVL_CEIL_USD)));
   const y = comps.map((c) => c.ratio_log);
-  const ws = comps.map((c) => c.weight);
+  const ws = comps.map((c) => compWeight(c, o.weighting));
   const line = huberLine(x, y, ws, bounds.lo, bounds.hi);
   const lineResidual = y.map((v, i) => v - line.a - line.b * x[i]!);
-  const category = tiltsOf(comps.map((c) => c.category), lineResidual, CATEGORY_PRIOR);
+  const category = capTilts(tiltsOf(comps.map((c) => c.category), lineResidual, o.category_prior), o.tilt_cap);
   const familyResidual = lineResidual.map((r, i) => r - tiltValue(category, comps[i]!.category));
-  const family = tiltsOf(comps.map((c) => c.family), familyResidual, FAMILY_PRIOR);
+  const family = capTilts(tiltsOf(comps.map((c) => c.family), familyResidual, o.family_prior), o.tilt_cap);
   const afterTilts = familyResidual.map((r, i) => r - tiltValue(family, comps[i]!.family));
   const gx: number[] = [];
   const gy: number[] = [];
@@ -271,10 +311,18 @@ export function fitTerms(comps: Comp[], bounds: { lo: number; hi: number } = { l
   });
   const wsum = Math.max(1e-9, gw.reduce((acc, w) => acc + w, 0));
   const level = gy.reduce((acc, v, i) => acc + gw[i]! * v, 0) / wsum;
-  const slope = pooledSlope(gx, gy.map((v) => v - level), gw);
+  const slope = clip(pooledSlope(gx, gy.map((v) => v - level), gw), o.growth_slope_lo, o.growth_slope_hi);
   const afterGrowth = comps.map((c, i) => afterTilts[i]! - growthTerm(c.growth_pct, level, slope));
-  const hold = huberLine(comps.map((c) => holdRegressor(c.age_years)), afterGrowth, ws, 0, 3);
+  const hold = o.hold_on
+    ? huberLine(comps.map((c) => holdRegressor(c.age_years)), afterGrowth, ws, o.hold_lo, o.hold_hi)
+    : { a: 0, b: 0, lo: o.hold_lo, hi: o.hold_hi, pinned: 'free' as const, n: comps.length };
   return { line, category, family, growth: { level, slope, n: gy.length }, hold: { a: hold.a, b: hold.b, lo: hold.lo, hi: hold.hi } };
+}
+
+/** Tilts with each value held inside a cap, in logs; the raw mean is kept as fitted. */
+export function capTilts(list: Tilt[], cap: number): Tilt[] {
+  if (!Number.isFinite(cap)) return list;
+  return list.map((t) => ({ ...t, value: clip(t.value, -cap, cap) }));
 }
 
 /** One comp's ratio under a fit, at one state of its record. */
@@ -334,10 +382,10 @@ export function fitFollow(comps: Comp[], early: Fit, asOf: string, bounds: { lo:
 }
 
 /** Fit every term of the radar on one pool of comps. */
-export function fitComps(protocols: Protocol[], asOf: string, bounds: { lo: number; hi: number } = { lo: LINE_BEND_LO, hi: LINE_BEND_HI }): Comps {
+export function fitComps(protocols: Protocol[], asOf: string, bounds: { lo: number; hi: number } = { lo: LINE_BEND_LO, hi: LINE_BEND_HI }, options: Partial<FitOptions> = {}): Comps {
   const { comps, count } = compPool(protocols, asOf);
   if (comps.length < 20) throw new Error(`the comps pool holds ${comps.length} tokens, too few to price a board`);
-  const fit = fitTerms(comps, bounds);
+  const fit = fitTerms(comps, bounds, options);
   const residuals = comps.map((c) => c.ratio_log - log(ratioUnderAt(fit, c, bounds)));
   const follow = fitFollow(comps, fit, asOf, bounds);
   return {

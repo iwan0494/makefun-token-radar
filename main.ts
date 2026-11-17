@@ -111,7 +111,7 @@ function gateIssue(rows: Array<{ slug: string; name: string; rank: number; impli
 const started = Date.now();
 const snapshot = parseSnapshot(readFileSync(inputFile, 'utf8'));
 const fitStarted = Date.now();
-const model = fitComps(snapshot.protocols, snapshot.as_of);
+const model = fitComps(snapshot.protocols, snapshot.as_of, { lo: -2, hi: 0.5 }, { hold_on: false });
 const fitMs = Date.now() - fitStarted;
 const radar = buildRadar(snapshot, model);
 if (radar.coverage.missing.length > 0) fail(`the board leaves ${radar.coverage.missing.length} watchlist protocols out: ${radar.coverage.missing.slice(0, 4).join(', ')}`);

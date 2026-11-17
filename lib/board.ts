@@ -1,16 +1,17 @@
 // The board: who is ranked, in what order, and what a reader can do about each one.
 //
-// Every early protocol the snapshot records — no token, and not a wrapped or bridged product, a version
-// of another protocol, or an exchange's balance sheet — is ranked by the cover its record implies at one
-// horizon: the token lists a year after its listing day. A protocol with no listing day is read from
-// the snapshot day instead, and the board says so on the row. The watchlist is covered first, because
-// it is the floor and never the ceiling; the other early protocols fill the board behind it, all on one
-// scale, so a $40M protocol with a four-year record can outrank a $3B balance sheet that listed last
-// month. Traded tokens are set aside from the ranking and counted with a reason each.
+// Ronde 2 ranks every early protocol the snapshot records: a no-token protocol a launch could still name,
+// with no wrapped or bridged product, no version of another protocol and no exchange's balance sheet in
+// the list. That is 198 rows, the 40 the house's watchlist names included, each priced by the cover its
+// record implies at one horizon (the token lists a year after its listing day; a protocol with no listing
+// day is read from the snapshot day and the row says so). Ranking by that value alone put a $2.7B
+// curator at the top and a $40M vault at the bottom; the farm plan beside each row is what decides
+// whether either is worth a reader's week, and it reads its payoff at the band's tenth percentile, not the
+// middle. Traded tokens are set aside and counted.
 
 import { clip, daysBetween, exp, familyOf, fitComps, growthTerm, holdTerm, log, recordsToken, tiltValue } from './comps.ts';
 import type { Comps, Protocol, Snapshot } from './types.ts';
-import { farmPlan } from './farm.ts';
+import { farmPlan, type Economics } from './farm.ts';
 
 /** The horizon every row is priced at: years after a protocol's listing day. */
 export const PRICE_HORIZON_YEARS = 1;
@@ -53,19 +54,9 @@ export interface Row {
   origin_days: number;
   growth_state: 'reported' | 'unreported';
   cohort: string;
-  farm: {
-    kind: string;
-    capital_usd: number;
-    cost_usd: number;
-    days: number;
-    gross_usd: number;
-    net_usd: number;
-    chance: number;
-    expected_usd: number;
-    break_even: number;
-    per_hour_usd: number;
-    verdict: 'Worth' | 'Marginal' | 'Skip';
-  };
+  /** The pool's tenth-percentile fitted ratio: the band end every plan is priced at. */
+  ratio_p10_floor: number;
+  farm: Economics;
   model: RowModel;
 }
 
@@ -139,7 +130,7 @@ export function tradedReason(p: Protocol): string {
 }
 
 /** A row's cohort: the watchlist, the below-floor early protocols, and the rest. */
-function cohortOf(row: { on_watchlist: boolean; tvl_usd: number }, floor: number): string {
+export function cohortOf(row: { on_watchlist: boolean; tvl_usd: number }, floor: number): string {
   if (row.on_watchlist) return 'watchlist';
   return row.tvl_usd < floor ? 'below floor' : 'above floor';
 }
@@ -149,6 +140,7 @@ export function buildRadar(snapshot: Snapshot, given?: Comps): Radar {
   const model = given ?? fitComps(snapshot.protocols, snapshot.as_of);
   const watch = new Set(snapshot.watchlist);
   const early = snapshot.protocols.filter(isEarly);
+  const ratioP10 = model.cover.p10;
   const priced = early.map((p) => {
     const { terms, ratioLog } = termsOf(model, p, snapshot.as_of);
     const ratio = exp(ratioLog);
@@ -156,11 +148,11 @@ export function buildRadar(snapshot: Snapshot, given?: Comps): Radar {
     const low = Math.max(1, Math.round(p.tvl_usd * ratio * exp(-BAND_LOG)));
     const high = Math.max(low + 1, Math.round(p.tvl_usd * ratio * exp(BAND_LOG)));
     const ageDays = daysBetween(p.listed_at, snapshot.as_of);
-    return { p, terms, ratio, value, low, high, ageDays };
+    return { p, terms, ratio, ratioLog, value, low, high, ageDays };
   });
   priced.sort((a, b) => b.value - a.value || b.p.tvl_usd - a.p.tvl_usd || (a.p.slug < b.p.slug ? -1 : 1));
-  const rows: Row[] = priced.map(({ p, terms, ratio, value, low, high, ageDays }, i) => {
-    const plan = farmPlan(model, p, snapshot.as_of, value, terms.origin_days);
+  const rows: Row[] = priced.map(({ p, terms, ratio, ratioLog, value, low, high, ageDays }, i) => {
+    const plan = farmPlan(model, p, snapshot.as_of, value, terms.origin_days, ratio, ratioP10);
     const onWatch = watch.has(p.slug);
     const row = {
       on_watchlist: onWatch,
@@ -191,6 +183,7 @@ export function buildRadar(snapshot: Snapshot, given?: Comps): Radar {
       origin_days: terms.origin_days,
       growth_state: p.change_7d === null ? 'unreported' : 'reported',
       cohort: cohortOf(row, snapshot.floor_usd),
+      ratio_p10_floor: ratioP10,
       farm: plan.economics,
       model: terms,
     } as Row;
