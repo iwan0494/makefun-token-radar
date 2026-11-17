@@ -1,0 +1,13 @@
+import { readFileSync } from 'node:fs';
+import { fitComps, validateFit, walkForward, quantile, median } from '../lib/comps.ts';
+const snap = JSON.parse(readFileSync('/home/hatch/workspace/makefun/token-radar/kit/input/snapshot.json', 'utf8'));
+const t0 = Date.now();
+const m = fitComps(snap.protocols, snap.as_of);
+console.log('fit ms', Date.now() - t0, 'n', m.comps, 'a', m.curve.a.toFixed(3), 'b', m.curve.b.toFixed(3), 'scale', m.curve.residual_scale.toFixed(3));
+console.log('growth', m.growth, 'seasoning', m.seasoning.slope.toFixed(3), 'n', m.seasoning.n, 'elite', m.elite);
+const t1 = Date.now();
+const v = validateFit(snap.protocols, snap.as_of, m, '2025-01-01');
+console.log('validate ms', Date.now() - t1);
+console.log(JSON.stringify(v, null, 1));
+const w = walkForward(snap.protocols, snap.as_of, '2025-06-01');
+console.log('walk 2025-06 n', w.n, 'train', w.train);

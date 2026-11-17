@@ -1,0 +1,16 @@
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fitComps, validateFit } from '../lib/comps.ts';
+import { buildBoard } from '../lib/board.ts';
+const snap = JSON.parse(readFileSync('/home/hatch/workspace/makefun/token-radar/kit/input/snapshot.json', 'utf8'));
+const t = Date.now();
+const m = fitComps(snap.protocols, snap.as_of);
+console.log('fit ms', Date.now() - t, 'a', m.curve.a.toFixed(3), 'b', m.curve.b.toFixed(3), 'scale', m.curve.residual_scale.toFixed(3), 'season', m.seasoning.slope.toFixed(3));
+const t2 = Date.now();
+const v = validateFit(snap.protocols, snap.as_of, m, '2025-01-01');
+console.log('validate ms', Date.now() - t2);
+console.log('loo n', v.loo_n, 'miss med', v.loo_miss_median.toFixed(3), 'p10', v.loo_miss_p10.toFixed(2), 'p90', v.loo_miss_p90.toFixed(2), 'mad', v.loo_unbiased_mad.toFixed(3), 'ratio p50', v.loo_ratio_p50.toFixed(2));
+console.log('read mad', v.read_unbiased_mad.toFixed(3), 'walk n', v.walk_n, 'corr', v.walk_corr.toFixed(3), 'mad', v.walk_mad.toFixed(3), 'bias', v.walk_bias.toFixed(3), 'pool corr', v.pool_corr.toFixed(3));
+for (const a of v.ablations) console.log(a.term, 'looMad', a.leave_out_mad.toFixed(3), 'd', a.delta_mad.toFixed(3), 'walkCorr', a.walk_corr.toFixed(3), 'd', a.delta_corr.toFixed(3));
+const b = buildBoard(snap, m);
+console.log('rows', b.rows.length, 'watch ranked', b.coverage.ranked_watch, 'missing', b.coverage.missing.length);
+b.rows.slice(0, 25).forEach((r) => console.log(String(r.rank).padStart(3), (r.tvl_usd / 1e6).toFixed(0).padStart(6), String(r.change_7d).padStart(8), (r.category ?? '').slice(0, 18).padEnd(18), (r.implied_value_usd / 1e3).toFixed(1) + 'k', (r.implied_value_low_usd / 1e3).toFixed(1) + 'k', (r.implied_value_high_usd / 1e3).toFixed(0) + 'k', r.watch ? 'W' : '', r.name.slice(0, 22)));

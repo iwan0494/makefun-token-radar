@@ -1,0 +1,15 @@
+import { readFileSync } from 'node:fs';
+import { fitComps, yearsBetween } from '../lib/comps.ts';
+import { buildBoard } from '../lib/board.ts';
+import { stepStrings } from '../lib/farm.ts';
+const snap = JSON.parse(readFileSync('/home/hatch/workspace/makefun/token-radar/kit/input/snapshot.json', 'utf8'));
+const t = Date.now();
+const m = fitComps(snap.protocols, snap.as_of);
+console.log('fit', Date.now() - t, 'ms');
+const t2 = Date.now();
+const b = buildBoard(snap, m);
+console.log('board', Date.now() - t2, 'ms', 'rows', b.rows.length, 'farm', b.farm.length);
+console.log(JSON.stringify(b.coverage, null, 0).slice(0, 1500));
+const fmt = (x: number) => x >= 1e6 ? (x / 1e6).toFixed(1) + 'M' : x >= 1e3 ? (x / 1e3).toFixed(0) + 'k' : String(x);
+b.rows.slice(0, 30).forEach((r) => console.log(String(r.rank).padStart(3), fmt(r.tvl_usd).padStart(7), String(r.change_7d).padStart(8), (r.category ?? '').slice(0, 18).padEnd(18), fmt(r.implied_value_usd).padStart(8), fmt(r.implied_value_low_usd).padStart(7), fmt(r.implied_value_high_usd).padStart(7), r.watch ? 'W' : '', r.name.slice(0, 24)));
+console.log('steps lengths', Math.min(...b.rows.flatMap((r) => r.farm_steps.map((s) => s.length))), Math.max(...b.rows.flatMap((r) => r.farm_steps.map((s) => s.length))), b.rows[0]!.farm_steps.length, b.rows[0]!.farm_steps.join(' | '));

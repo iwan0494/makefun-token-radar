@@ -1,0 +1,16 @@
+import { readFileSync } from 'node:fs';
+globalThis.window = globalThis;
+const src = readFileSync('./out/data.js', 'utf8');
+new Function(src)();
+const R = globalThis.RADAR;
+R.rows.sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9));
+const ranked = R.rows.filter((r) => r.rank);
+console.log('page rows', R.rows.length, 'ranked', ranked.length);
+console.log(ranked.slice(0, 6).map((r) => [r.rank, r.name, r.implied_value_usd, r.verdict, r.net_if_launch_usd, r.break_even_odds, r.net_per_hour_usd, r.slice_capital_usd].join(' ')));
+const b = JSON.parse(readFileSync('./out/board.json', 'utf8'));
+const byslug = new Map(b.rows.map((r) => [r.slug, r]));
+console.log('match', ranked.every((r) => byslug.get(r.slug)?.rank === r.rank && byslug.get(r.slug)?.implied_value_usd === r.implied_value_usd));
+const tally = (key) => JSON.stringify(ranked.reduce((a, r) => ((a[r[key]] = (a[r[key]] || 0) + 1), a), {}));
+console.log('verdicts', tally('verdict'), 'careers', tally('career'));
+const sample = { ...ranked[1] }; sample.farm_steps = undefined;
+console.log(JSON.stringify(sample).slice(0, 1200));
