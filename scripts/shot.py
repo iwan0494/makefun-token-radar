@@ -1,97 +1,68 @@
 #!/usr/bin/env python3
-"""Take the four token-radar screenshots from the repo dashboard, and dump
-what the page itself renders so it can be checked against board.json.
+"""Take the four screenshots from the built dashboard in out/.
 
-Usage:
-  python3 scripts/shot.py [--dump /tmp/r4-page.json]
-Viewport 1300x1000 (long side 1300 <= 1440, short side 1000 >= 800).
-Shots: 1-board (top), 2-detail (?row=<top-1 slug>), 3-filtered (?filter=worth),
-4-model (?view=model). Each saved as JPG quality 82, checked <= 512 KiB.
+Run main.ts first (with --skip-dossier if the shots do not exist yet), then
+this script, then main.ts again so the fresh shots ride into out/ and the
+dossier. The shots land in the repository's screenshots/ directory.
 """
-import json
-import re
+
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-DASH = REPO / "dashboard"
+from playwright.sync_api import sync_playwright
+
+REPO = Path(__file__).resolve().parents[1]
+OUT = REPO / "out" / "dashboard"
 SHOTS = REPO / "screenshots"
+VIEWPORT = {"width": 1280, "height": 960}
+
+SHOTS.mkdir(parents=True, exist_ok=True)
+PAGE = "file://" + str(OUT / "index.html")
 
 
-def load_radar():
-    text = (DASH / "zdata.js").read_text()
-    m = re.search(r"window\.RADAR = (\{.*\});\s*$", text, re.S)
-    if not m:
-        raise SystemExit("zdata.js did not parse")
-    return json.loads(m.group(1))
+def size(path: Path) -> int:
+    return path.stat().st_size
 
 
-def main():
-    dump_path = None
-    args = sys.argv[1:]
-    if "--dump" in args:
-        dump_path = Path(args[args.index("--dump") + 1])
-    from playwright.sync_api import sync_playwright
-
-    radar = load_radar()
-    top_slug = radar["rowsData"][0][0]
-    base = f"file://{DASH}/index.html"
-    jobs = [
-        ("1-board.jpg", base, None),
-        ("2-detail.jpg", f"{base}?row={top_slug}", ".dialog"),
-        ("3-filtered.jpg", f"{base}?filter=worth", None),
-        ("4-model.jpg", f"{base}?view=model", "#proof"),
-    ]
-    SHOTS.mkdir(exist_ok=True)
+def main() -> None:
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page(viewport={"width": 1300, "height": 1000})
-        for name, url, wait_sel in jobs:
-            page.goto(url)
-            page.wait_for_timeout(400)
-            if wait_sel:
-                page.wait_for_selector(wait_sel, state="visible", timeout=5000)
-                page.wait_for_timeout(300)
-            out = SHOTS / name
-            page.screenshot(path=str(out), type="jpeg", quality=82)
-            size = out.stat().st_size
-            print(f"{name}: {size} bytes {'OK' if size <= 524288 else 'TOO BIG'}")
-        if dump_path is not None:
-            page.goto(base)
-            page.wait_for_timeout(400)
-            table = page.evaluate(
-                """() => {
-                  const rows = [];
-                  document.querySelectorAll('#board-body tr').forEach(tr => {
-                    const t = tr.querySelectorAll('td');
-                    rows.push({
-                      rank: t[0].textContent.trim(),
-                      name: t[1].querySelector('.pname').textContent.trim(),
-                      cover: t[6].textContent.trim(),
-                      value: t[7].querySelector('.big').textContent.trim(),
-                      odds: t[8].textContent.trim(),
-                      net: t[10].querySelector('.big').textContent.trim(),
-                      verdict: t[11].textContent.trim(),
-                    });
-                  });
-                  return rows;
-                }"""
-            )
-            page.goto(f"{base}?row={top_slug}")
-            page.wait_for_selector(".dialog", state="visible", timeout=5000)
-            page.wait_for_timeout(300)
-            detail = page.evaluate(
-                """() => ({
-                  name: document.querySelector('#d-name').textContent,
-                  tiles: [...document.querySelectorAll('#d-tiles dd')].map(e => e.textContent),
-                  terms: [...document.querySelectorAll('#d-terms td')].map(e => e.textContent),
-                  steps: [...document.querySelectorAll('#d-steps li')].map(e => e.textContent),
-                  money: document.querySelector('#d-money').textContent,
-                })"""
-            )
-            dump_path.write_text(json.dumps({"table": table, "detail": detail, "topSlug": top_slug}, indent=1))
-            print(f"dump: {dump_path}")
+        page = browser.new_page(viewport=VIEWPORT)
+        page.goto(PAGE)
+        page.wait_for_selector("#rows tr")
+        page.wait_for_timeout(400)
+        board = SHOTS / "1-board.jpg"
+        page.screenshot(path=str(board), type="jpeg", quality=82)
+        print(f"1-board.jpg {size(board)} bytes")
+
+        # A detail view: the top row's dialog, all nine steps in one frame.
+        page.locator("#rows tr").first.click()
+        page.locator("#overlay").wait_for(state="visible")
+        page.wait_for_timeout(400)
+        detail = SHOTS / "2-detail.jpg"
+        page.screenshot(path=str(detail), type="jpeg", quality=82)
+        print(f"2-detail.jpg {size(detail)} bytes")
+
+        # The Worth filter, to show the shortlist alone.
+        page.locator("#d-close").click()
+        page.locator("#overlay").wait_for(state="hidden")
+        page.locator('.chip[data-filter="Worth"]').click()
+        page.wait_for_timeout(400)
+        filtered = SHOTS / "3-filtered.jpg"
+        page.screenshot(path=str(filtered), type="jpeg", quality=82)
+        print(f"3-filtered.jpg {size(filtered)} bytes")
+
+        # The model section: proof cards, scatter, ablation, accounting.
+        model = SHOTS / "4-model.jpg"
+        page.locator("#model").screenshot(path=str(model), type="jpeg", quality=82)
+        print(f"4-model.jpg {size(model)} bytes")
         browser.close()
+
+    for f in sorted(SHOTS.glob("*.jpg")):
+        if size(f) > 512 * 1024:
+            print(f"TOO BIG: {f.name} {size(f)} bytes > 512 KiB", file=sys.stderr)
+            sys.exit(1)
+    print("all four screenshots under 512 KiB")
 
 
 if __name__ == "__main__":

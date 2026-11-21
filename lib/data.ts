@@ -1,11 +1,11 @@
-// The snapshot's shape and the board's rule: which protocols are subjects, which
-// anchor the fit, and which are set aside. Nothing here names a protocol: every
-// list below is read off the snapshot's own ten fields.
+// The sealed snapshot: one protocol per row, the watchlist, the floor.
+// Nothing here touches the network or the clock; every date is read off the
+// snapshot's own as_of, so two runs over the same input agree byte for byte.
 
 export interface Protocol {
   slug: string;
   name: string;
-  category: string | null;
+  category: string;
   chains: string[];
   tvl_usd: number;
   change_7d: number | null;
@@ -17,141 +17,115 @@ export interface Protocol {
 
 export interface Snapshot {
   as_of: string;
-  source: string;
   floor_usd: number;
   protocols: Protocol[];
   watchlist: string[];
 }
 
-/** The snapshot as the house sealed it: 758 protocols, ten fields each, no more. */
+/** Parse the snapshot, refusing a shape the fit cannot read. */
 export function parseSnapshot(text: string): Snapshot {
-  const raw = JSON.parse(text) as Snapshot;
-  if (typeof raw.as_of !== 'string' || !Array.isArray(raw.protocols) || !Array.isArray(raw.watchlist)) {
-    throw new Error('snapshot: as_of, protocols and watchlist are required');
+  const raw = JSON.parse(text) as unknown;
+  if (typeof raw !== 'object' || raw === null) throw new Error('snapshot: not an object');
+  const o = raw as Record<string, unknown>;
+  if (typeof o.as_of !== 'string' || typeof o.floor_usd !== 'number' || !Array.isArray(o.protocols) || !Array.isArray(o.watchlist)) {
+    throw new Error('snapshot: as_of, floor_usd, protocols and watchlist are required');
   }
-  for (const p of raw.protocols) {
-    if (typeof p.slug !== 'string' || typeof p.name !== 'string' || typeof p.tvl_usd !== 'number') {
-      throw new Error('snapshot: every protocol needs a slug, a name and a TVL');
+  const protocols = (o.protocols as unknown[]).map((p, i) => {
+    const q = p as Record<string, unknown>;
+    if (typeof q.slug !== 'string' || typeof q.name !== 'string' || typeof q.category !== 'string' || !Array.isArray(q.chains) || typeof q.tvl_usd !== 'number') {
+      throw new Error(`snapshot: protocol ${i} lacks slug, name, category, chains or tvl_usd`);
     }
-  }
-  return raw;
+    return {
+      slug: q.slug,
+      name: q.name,
+      category: q.category,
+      chains: (q.chains as unknown[]).map(String),
+      tvl_usd: q.tvl_usd,
+      // The snapshot's change is in percent (-8.2 means -8.2%); the model,
+      // the board and the page all work in fractions, so divide it here, once.
+      change_7d: typeof q.change_7d === 'number' ? q.change_7d / 100 : null,
+      mcap_usd: typeof q.mcap_usd === 'number' ? q.mcap_usd : null,
+      listed_at: typeof q.listed_at === 'string' ? q.listed_at : null,
+      gecko_id: typeof q.gecko_id === 'string' ? q.gecko_id : null,
+      symbol: typeof q.symbol === 'string' ? q.symbol : null,
+    } as Protocol;
+  });
+  return { as_of: o.as_of, floor_usd: o.floor_usd, protocols, watchlist: (o.watchlist as unknown[]).map(String) };
 }
 
-/** Whole dollars, truncated toward zero: $2.76B, $45.9M, $860k, $95. */
-export function usd(x: number): string {
-  const n = Math.abs(x);
-  const sign = x < 0 ? '-' : '';
-  if (n >= 1e12) return `${sign}$${(n / 1e12).toFixed(2)}T`;
-  if (n >= 1e9) return `${sign}$${(n / 1e9).toFixed(2)}B`;
-  if (n >= 1e6) return `${sign}$${(n / 1e6).toFixed(n >= 1e7 ? 1 : 2)}M`;
-  if (n >= 1e3) return `${sign}$${(n / 1e3).toFixed(n >= 1e5 ? 0 : 1)}k`;
-  return `${sign}$${Math.round(n)}`;
-}
-
-/** A plain number at a glance: 2.76B, 45.9M, 860k, 95. */
-export function num(x: number): string {
-  const n = Math.abs(x);
-  const sign = x < 0 ? '-' : '';
-  if (n >= 1e12) return `${sign}${(n / 1e12).toFixed(2)}T`;
-  if (n >= 1e9) return `${sign}${(n / 1e9).toFixed(2)}B`;
-  if (n >= 1e6) return `${sign}${(n / 1e6).toFixed(n >= 1e7 ? 1 : 2)}M`;
-  if (n >= 1e3) return `${sign}${(n / 1e3).toFixed(n >= 1e5 ? 0 : 1)}k`;
-  return `${sign}${Math.round(n)}`;
-}
-
-/** Days between two YYYY-MM-DD dates, or null when either is missing. */
-export function daysBetween(a: string | null, b: string): number | null {
-  if (a === null) return null;
-  const ms = new Date(`${b}T00:00:00Z`).getTime() - new Date(`${a}T00:00:00Z`).getTime();
+/** Years between a listing date and the snapshot's as_of, null when unlisted. */
+export function ageYears(listedAt: string | null, asOf: string): number | null {
+  if (listedAt === null) return null;
+  const ms = Date.parse(`${asOf}T00:00:00Z`) - Date.parse(`${listedAt}T00:00:00Z`);
   if (!Number.isFinite(ms)) return null;
-  return Math.round(ms / 86_400_000);
+  return ms / (365.25 * 24 * 60 * 60 * 1000);
 }
 
-/** A span of days in the words a reader would use: 3 h, 21 days, 2.8 months, 1.5 years. */
-export function span(days: number): string {
-  if (days < 1.5) return `${Math.max(1, Math.round(days * 24))} h`;
-  if (days < 45) return `${Math.round(days)} days`;
-  if (days < 400) return `${(days / 30.44).toFixed(1)} months`;
-  return `${(days / 365.25).toFixed(1)} years`;
-}
-
-/** Years since the listing day, or null when the snapshot records none. */
-export function ageYears(p: Protocol, asOf: string): number | null {
-  const d = daysBetween(p.listed_at, asOf);
-  return d === null ? null : Math.max(0, d / 365.25);
-}
-
-export function clip(x: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, x));
-}
-
-/** The family a protocol's category reads as: lowercased, hyphenated, one word. */
-export function familyOf(p: Protocol): string {
-  return (p.category ?? 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
-}
-
-/** A protocol records a token when DefiLlama gives it a CoinGecko id or a ticker. */
-export function recordsToken(p: Protocol): boolean {
+/** A protocol has a token when DefiLlama names one for it. */
+export function hasToken(p: Protocol): boolean {
   return p.gecko_id !== null || p.symbol !== null;
 }
 
-// ---------------------------------------------------------------- the board's rule
-
-const VERSION_END = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)$/;
-const WRAPPED_WORD = /\b(wrapped|staked|staking)\b/i;
-const EXCHANGE_START = /^(Binance|Coinbase|Bybit|Kraken|Bitget|OKX|Bitfinex|Gemini)\b/i;
-const PRODUCT_CATEGORY = new Set([
-  'Bridge', 'Canonical Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC', 'CEX',
+/**
+ * Categories set aside as products, not priced: exchanges, bridges and
+ * staking products are infrastructure whose "token" would not be a protocol
+ * launch the radar exists to find. A watchlist name is always priced, even
+ * when its category sits in this set.
+ */
+export const PRODUCT_CATEGORIES: ReadonlySet<string> = new Set([
+  'CEX',
+  'Bridge',
+  'Canonical Bridge',
+  'Cross Chain Bridge',
+  'Liquid Staking',
+  'Liquid Restaking',
+  'Staking Pool',
+  'Restaking',
+  'Anchor BTC',
+  'Decentralized BTC',
+  'Restaked BTC',
+  'Farm',
+  'Leveraged Farming',
 ]);
 
-/**
- * A wrapped, staked or bridged product, or a versioned name: not a protocol still
- * waiting on a launch of its own. The rule is the watchlist's own, read off the
- * snapshot's ten fields; the parent protocol is not among them, so the watchlist
- * itself (given in the file) is the authority on the floor.
- */
-export function isProduct(p: Protocol): boolean {
-  if (p.category !== null && PRODUCT_CATEGORY.has(p.category)) return true;
-  if (VERSION_END.test(p.name)) return true;
-  if (WRAPPED_WORD.test(p.name)) return true;
-  if (EXCHANGE_START.test(p.name)) return true;
-  return false;
+/** The board's subjects: pre-token protocols, products set aside. */
+export function isBoardSubject(p: Protocol, watchlist: ReadonlySet<string>): boolean {
+  if (hasToken(p)) return false;
+  return !PRODUCT_CATEGORIES.has(p.category) || watchlist.has(p.slug);
 }
 
-/** The board's subjects: no token on record, and not a product of another protocol. */
-export function isBoardSubject(p: Protocol): boolean {
-  return !recordsToken(p) && !isProduct(p);
+/** The family is the category lower-cased and dashed, so it is not stored. */
+export function familyOf(category: string): string {
+  return category
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
-/** The fit's anchors: a token that trades, with a market cap, a TVL and a listing day. */
-export function isComp(p: Protocol): boolean {
-  return p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0 && p.listed_at !== null;
-}
-
-/** The whole universe, accounted for: priced, traded, or set aside with its reason. */
-export function accountFor(snap: Snapshot): {
+export interface Accounting {
+  total: number;
   priced: number;
   traded: number;
   setAside: number;
-  noMcap: number;
   belowFloor: number;
-  onWatchlist: number;
-} {
+}
+
+/** The 758 accounted for: priced + traded + set aside, nothing missing. */
+export function accounting(snapshot: Snapshot): Accounting {
+  const watch = new Set(snapshot.watchlist);
   let priced = 0;
   let traded = 0;
-  let noMcap = 0;
-  let products = 0;
+  let setAside = 0;
   let belowFloor = 0;
-  for (const p of snap.protocols) {
-    if (recordsToken(p)) {
+  for (const p of snapshot.protocols) {
+    if (hasToken(p)) {
       traded++;
-      if (p.mcap_usd === null) noMcap++;
-    } else if (isProduct(p)) {
-      products++;
-    } else {
+    } else if (isBoardSubject(p, watch)) {
       priced++;
-      if (p.tvl_usd < snap.floor_usd) belowFloor++;
+      if (p.tvl_usd < snapshot.floor_usd) belowFloor++;
+    } else {
+      setAside++;
     }
   }
-  return { priced, traded, setAside: products, noMcap, belowFloor, onWatchlist: snap.watchlist.length };
+  return { total: snapshot.protocols.length, priced, traded, setAside, belowFloor };
 }

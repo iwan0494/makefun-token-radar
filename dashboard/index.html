@@ -3,124 +3,123 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Launch Radar — comps-fitted value, tested blind</title>
+<title>Launch Radar — Token Radar</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <header class="masthead">
-  <div class="masthead-text">
-    <p class="kicker">Token radar · an entry for make.fun</p>
+  <div class="mast-left">
+    <div class="kicker">Token Radar &middot; An entry for make.fun</div>
     <h1>Launch Radar</h1>
-    <p class="subhead">Comps-fitted value, tested blind and walk-forward. Launch odds and rank ranges on every row, and a farm plan netted to the dollar.</p>
+    <p class="sub">Comps-fitted value, tested blind and walk-forward. Launch odds and rank ranges on every row, and a farm plan netted to the dollar.</p>
   </div>
-  <dl class="mast-stats">
-    <div><dt>Rows</dt><dd id="st-rows">198</dd></div>
-    <div><dt>Watchlist</dt><dd id="st-watch">40/40</dd></div>
-    <div><dt>Worth</dt><dd id="st-worth">–</dd></div>
-    <div><dt>Comps</dt><dd id="st-comps">85</dd></div>
-  </dl>
+  <div class="mast-stats">
+    <div class="stat"><span class="stat-label">Rows</span><span class="stat-num" id="stat-rows">&ndash;</span></div>
+    <div class="stat"><span class="stat-label">Watchlist</span><span class="stat-num" id="stat-watch">&ndash;</span></div>
+    <div class="stat"><span class="stat-label">Worth</span><span class="stat-num" id="stat-worth">&ndash;</span></div>
+    <div class="stat"><span class="stat-label">Comps</span><span class="stat-num" id="stat-comps">&ndash;</span></div>
+  </div>
 </header>
 
-<p class="integrity" id="integrity">758 protocols accounted for · 416 traded · 144 set aside · 0 missing</p>
+<div class="integrity" id="integrity">&nbsp;</div>
 
-<section class="kpis" id="kpis" aria-label="Out-of-sample proof">
-  <div><span class="k-label">Within 3× · leave-one-out</span><span class="k-num" id="k-loo">–</span></div>
-  <div><span class="k-label">Within 3× · tested blind</span><span class="k-num" id="k-blind">–</span></div>
-  <div><span class="k-label">Within 3× · walk-forward</span><span class="k-num" id="k-wf">–</span></div>
-  <div><span class="k-label">Best plan, per hour</span><span class="k-num" id="k-best">–</span></div>
-  <div><span class="k-label">Leave-one-out median miss</span><span class="k-num small" id="k-miss">–</span></div>
+<section class="kpis" id="kpis">
+  <div class="kpi"><span class="kpi-label">Within 3&times; &middot; Leave-one-out</span><span class="kpi-num" id="kpi-loo">&ndash;</span></div>
+  <div class="kpi"><span class="kpi-label">Within 3&times; &middot; Tested blind</span><span class="kpi-num" id="kpi-blind">&ndash;</span></div>
+  <div class="kpi"><span class="kpi-label">Within 3&times; &middot; Walk-forward</span><span class="kpi-num" id="kpi-wf">&ndash;</span></div>
+  <div class="kpi"><span class="kpi-label">Best plan, per hour</span><span class="kpi-num" id="kpi-best">&ndash;</span></div>
+  <div class="kpi"><span class="kpi-label">Leave-one-out median miss</span><span class="kpi-num" id="kpi-miss">&ndash;</span></div>
 </section>
 
 <main>
-  <section class="board-section">
-    <h2><span id="board-count">198</span> pre-token protocols, priced</h2>
-    <p class="lede">Ranked by implied value one year past each listing day — TVL × implied cover, with the cover read by the fit at the protocol's category, family, chain, seven-day growth and record. A name opens its arithmetic, its cohort and its whole plan.</p>
-    <div class="verdict-pills" id="verdict-pills"></div>
-    <div class="controls">
-      <label>Search <input id="q" type="search" placeholder="name, category or family" autocomplete="off"></label>
-      <label>Cohort
-        <select id="cohort">
-          <option value="all">All rows</option>
-          <option value="watchlist">Watchlist</option>
-          <option value="floor">Above the $50M floor</option>
-          <option value="below">Below the floor</option>
-        </select>
-      </label>
-      <label>Family
-        <select id="family"><option value="all">Every family</option></select>
-      </label>
-      <label>Sort
-        <select id="sort">
-          <option value="rank">Rank</option>
-          <option value="value">Implied value</option>
-          <option value="net">Net if it launches</option>
-          <option value="odds">Launch odds</option>
-          <option value="tvl">TVL</option>
-        </select>
-      </label>
-      <button id="reset" type="button">Reset</button>
-    </div>
-    <p class="rowcount" id="rowcount">198 of 198 rows</p>
-    <div class="table-wrap">
-      <table id="board">
-        <thead>
-          <tr>
-            <th class="num">#</th><th>Protocol</th><th>Family</th><th class="num">TVL</th><th class="num">7d</th><th class="num">Record</th>
-            <th class="num">Implied cover</th><th class="num">Implied value</th><th class="num">Launch odds</th><th class="num">Rank range</th><th class="num">Net if it launches</th><th>Plan</th>
-          </tr>
-        </thead>
-        <tbody id="board-body"></tbody>
-      </table>
-    </div>
-  </section>
+  <h2><span id="board-count">198</span> pre-token protocols, priced</h2>
+  <p class="lede">Ranked by implied value one year past each listing day &mdash; TVL &times; implied cover, with the cover read by the fit at the protocol&rsquo;s category, family, chain, seven-day growth and record. Each name opens its arithmetic, its cohort and its whole plan.</p>
 
-  <section class="proof" id="proof">
-    <h2>Tested on tokens the fit never saw</h2>
-    <p class="lede">Each token is priced by a fit that excluded it. Within 3× is the share read between a third and three times the cover the token records. The launch cohort is the tokens listed from 2024 on — the cohort a launch is most like.</p>
-    <div class="proof-cards" id="proof-cards"></div>
-    <div class="proof-grid">
-      <figure class="scatter">
-        <figcaption>Read against recorded, leave-one-out — 85 anchors</figcaption>
-        <svg id="scatter" viewBox="0 0 460 340" role="img" aria-label="Scatter of predicted against recorded log cover"></svg>
-      </figure>
-      <div>
-        <h3>Every term, ablation-tested</h3>
-        <p class="fine">Leave-one-out median miss when one term is dropped. The record term costs the leave-one-out test a little and wins the blind test — it stays, because the criterion names age and the forward test is the honest one.</p>
-        <table class="small-table" id="ablation"></table>
-      </div>
-    </div>
-    <div class="proof-grid">
-      <div>
-        <h3>758 protocols accounted for</h3>
-        <table class="small-table" id="accounting"></table>
-      </div>
-      <div>
-        <h3>The page checks itself</h3>
-        <ul class="checks" id="checks"></ul>
-      </div>
-    </div>
-    <div class="method">
-      <h3>How the cover was read</h3>
-      <p id="method-text"></p>
-      <p class="fine">Assumptions the plan adds: a $100–$2,000 clip at 0.05% of TVL, $4 of gas a leg, 4.5% a year given up, a 15 bp exit, $20 an hour for the reader's time, a 12-week season at most, a near miss pays nothing.</p>
-    </div>
-  </section>
+  <div class="chips" id="chips">
+    <button class="chip active" data-filter="all">All <span id="chip-all">198</span></button>
+    <button class="chip" data-filter="Worth"><span id="chip-worth">7</span> Worth</button>
+    <button class="chip" data-filter="Marginal"><span id="chip-marginal">13</span> Marginal</button>
+    <button class="chip" data-filter="Skip"><span id="chip-skip">178</span> Skip</button>
+  </div>
+
+  <div class="filters">
+    <label class="f-search"><span>Search</span><input id="q" type="search" placeholder="name, category or family" autocomplete="off"></label>
+    <label><span>Cohort</span><select id="cohort"><option value="all">All rows</option><option value="watch">Watchlist only</option><option value="floor">Above the $50M floor</option><option value="below">Below the $50M floor</option></select></label>
+    <label><span>Family</span><select id="family"><option value="all">Every family</option></select></label>
+    <label><span>Sort</span><select id="sort"><option value="rank">Rank</option><option value="value">Implied value</option><option value="odds">Launch odds</option><option value="net">Net if it launches</option><option value="perhour">Net per hour</option></select></label>
+    <button id="reset" type="button">Reset</button>
+  </div>
+
+  <div class="rowcount"><span id="shown">198</span> of <span id="total">198</span> rows</div>
+
+  <table id="board">
+    <thead>
+      <tr>
+        <th class="num">#</th><th>Protocol</th><th>Family</th><th class="num">TVL</th><th class="num">7d</th><th class="num">Record</th>
+        <th class="num">Implied cover</th><th class="num">Implied value</th><th class="num">Launch odds</th><th class="num">Rank range</th>
+        <th class="num">Net if it launches</th><th>Plan</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
 </main>
 
-<div class="dialog-backdrop" id="dialog-backdrop" hidden>
-  <article class="dialog" id="dialog" role="dialog" aria-modal="true" aria-labelledby="d-name">
-    <button class="dialog-close" id="dialog-close" type="button" aria-label="Close">×</button>
-    <p class="d-rank" id="d-rank"></p>
-    <h2 id="d-name"></h2>
-    <p class="d-sub" id="d-sub"></p>
-    <div class="d-tiles" id="d-tiles"></div>
+<section id="model">
+  <h2>Tested on tokens the fit never saw</h2>
+  <p class="lede">Each token is priced by a fit that excluded it. Within 3&times; is the share read between a third and three times the cover the token recorded. The launch cohort is the tokens listed from 2024 on &mdash; the cohort a launch is most like.</p>
+  <div class="proof" id="proof">
+    <div class="card"><span class="card-label">Leave-one-out</span><span class="card-num" id="proof-loo">&ndash;</span><span class="card-sub" id="proof-loo-sub">&nbsp;</span><span class="bar"><i id="proof-loo-bar"></i></span></div>
+    <div class="card"><span class="card-label">Tested blind</span><span class="card-num" id="proof-blind">&ndash;</span><span class="card-sub" id="proof-blind-sub">&nbsp;</span><span class="bar"><i id="proof-blind-bar"></i></span></div>
+    <div class="card"><span class="card-label">Later listings</span><span class="card-num" id="proof-wf">&ndash;</span><span class="card-sub" id="proof-wf-sub">&nbsp;</span><span class="bar"><i id="proof-wf-bar"></i></span></div>
+  </div>
+  <div class="model-grid">
+    <div class="scatter-box">
+      <div class="box-label">Read against recorded, leave-one-out &mdash; <span id="scatter-n">85</span> anchors</div>
+      <svg id="scatter" viewBox="0 0 460 340" role="img" aria-label="Recorded against read log cover"></svg>
+      <div class="axis-x">recorded log cover runs left to right, read log cover bottom to top</div>
+    </div>
+    <div class="ablation-box">
+      <h3>Every term, ablation-tested</h3>
+      <p class="small" id="ablation-note">Leave-one-out median miss when one term is dropped.</p>
+      <table id="ablation">
+        <thead><tr><th>Term dropped</th><th class="num">LOO miss</th><th class="num">Cost</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="model-grid">
+    <div class="account-box">
+      <h3>758 protocols accounted for</h3>
+      <table id="account">
+        <tbody></tbody>
+      </table>
+      <p class="small" id="account-note">&nbsp;</p>
+    </div>
+    <div class="checks-box">
+      <h3>The page checks itself</h3>
+      <table id="checks">
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="d-name">
+    <button class="close" id="d-close" type="button" aria-label="Close">&times;</button>
+    <div class="d-rank" id="d-rank">&nbsp;</div>
+    <h2 id="d-name">&nbsp;</h2>
+    <div class="d-sub" id="d-sub">&nbsp;</div>
+    <div class="tiles" id="d-tiles"></div>
     <h3>How the cover was read</h3>
-    <table class="d-terms" id="d-terms"></table>
-    <p class="d-note" id="d-note"></p>
+    <table class="terms" id="d-terms">
+      <tbody></tbody>
+    </table>
+    <p class="small">Every tilt above is read off traded tokens in the same category and family; none is typed in.</p>
     <h3>The plan, nine moves</h3>
-    <ol class="d-steps" id="d-steps"></ol>
-    <p class="d-money" id="d-money"></p>
-  </article>
+    <ol class="steps" id="d-steps"></ol>
+    <div class="money" id="d-money">&nbsp;</div>
+  </div>
 </div>
 
 <script src="zdata.js"></script>
