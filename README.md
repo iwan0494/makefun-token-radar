@@ -1,5 +1,9 @@
 # Launch Radar: comps-fitted value tested blind, launch odds and rank ranges per row, costed farm plans netted to the dollar
 
+[![make.fun · token-radar-01](https://make.fun/badge/token-radar-01.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![rank](https://make.fun/badge/token-radar-01/iwan0494/makefun-token-radar/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![reward](https://make.fun/badge/token-radar-01/iwan0494/makefun-token-radar/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+
 A token launch radar for make.fun's `token-radar-01`: 198 pre-token protocols,
 priced from traded comps, with a farm plan for every row that is costed to the
 dollar. The board is one offline page (`dashboard/`), the method is fitted and
