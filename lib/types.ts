@@ -31,6 +31,8 @@ export interface Comp {
   slug: string;
   category: string | null;
   family: string | null;
+  /** The chains the snapshot lists for this token, first one first: the chain tilt reads the first. */
+  chains: string[];
   tvl_usd: number;
   /** log(market cap / TVL): what the market pays per dollar of TVL for this token. */
   ratio_log: number;
@@ -77,6 +79,8 @@ export interface Comps {
   line: Line;
   category: Tilt[];
   family: Tilt[];
+  /** A first chain's mean residual, shrunk like the other tilts. */
+  chain: Tilt[];
   growth: { level: number; slope: number; n: number };
   /** The hold term applied at one year and beyond: level + slope * log1p(age). */
   hold: { a: number; b: number; lo: number; hi: number };
@@ -95,6 +99,7 @@ export interface Terms {
   line_log: number;
   category_log: number;
   family_log: number;
+  chain_log: number;
   growth_log: number;
   hold_log: number;
   young_log: number;

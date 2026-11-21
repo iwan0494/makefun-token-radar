@@ -33,6 +33,8 @@ export const RATIO_FLOOR = 1e-4;
 export const HUBER_K = 1.345;
 export const CATEGORY_PRIOR = 3;
 export const FAMILY_PRIOR = 6;
+/** A first chain's mean residual is shrunk by n / (n + prior), like the other tilts. */
+export const CHAIN_PRIOR = 6;
 export const TILT_MIN_N = 3;
 export const GROWTH_CLIP = 1;
 export const WEIGHT_HALF_TVL = 50_000_000;
@@ -98,6 +100,11 @@ export function familyOf(p: Protocol): string | null {
   return c.trim().split(/\s+/)[0]!.toLowerCase();
 }
 
+/** A protocol's home chain: the first chain the snapshot lists, or null when it lists none. */
+export function chainOf(p: { chains: string[] }): string | null {
+  return p.chains.length > 0 ? p.chains[0]! : null;
+}
+
 /** The cover ratio a traded token records: market cap per dollar of TVL, or null. */
 export function coverRatio(p: Protocol): number | null {
   if (p.mcap_usd === null || p.mcap_usd <= 0 || p.tvl_usd <= 0) return null;
@@ -115,7 +122,7 @@ export function holdRegressor(ageYears: number): number {
 }
 
 /** A comp's record with one feature swapped, for reading a state: a listing day, an age, a growth. */
-export type CompLike = Pick<Comp, 'tvl_usd' | 'category' | 'family' | 'age_years' | 'growth_pct'>;
+export type CompLike = Pick<Comp, 'tvl_usd' | 'category' | 'family' | 'chains' | 'age_years' | 'growth_pct'>;
 
 /** The comps pool: every traded token with a cover ratio, a listing day and at least one year behind it. */
 export function compPool(protocols: Protocol[], asOf: string): { comps: Comp[]; count: PoolCount } {
@@ -136,6 +143,7 @@ export function compPool(protocols: Protocol[], asOf: string): { comps: Comp[]; 
       slug: p.slug,
       category: p.category,
       family: familyOf(p),
+      chains: p.chains,
       tvl_usd: p.tvl_usd,
       ratio_log: log(ratio),
       growth_pct: p.change_7d,
@@ -279,6 +287,8 @@ export interface Fit {
   line: Line;
   category: Tilt[];
   family: Tilt[];
+  /** A first chain's mean residual, shrunk like the other tilts: most rows name a chain the pool has seen, so most rows carry a peer term that is not zero. */
+  chain: Tilt[];
   growth: { level: number; slope: number; n: number };
   hold: { a: number; b: number; lo: number; hi: number };
 }
@@ -299,7 +309,9 @@ export function fitTerms(comps: Comp[], bounds: { lo: number; hi: number } = { l
   const category = capTilts(tiltsOf(comps.map((c) => c.category), lineResidual, o.category_prior), o.tilt_cap);
   const familyResidual = lineResidual.map((r, i) => r - tiltValue(category, comps[i]!.category));
   const family = capTilts(tiltsOf(comps.map((c) => c.family), familyResidual, o.family_prior), o.tilt_cap);
-  const afterTilts = familyResidual.map((r, i) => r - tiltValue(family, comps[i]!.family));
+  const chainResidual = familyResidual.map((r, i) => r - tiltValue(family, comps[i]!.family));
+  const chain = capTilts(tiltsOf(comps.map((c) => chainOf(c)), chainResidual, CHAIN_PRIOR), o.tilt_cap);
+  const afterTilts = chainResidual.map((r, i) => r - tiltValue(chain, chainOf(comps[i]!)));
   const gx: number[] = [];
   const gy: number[] = [];
   const gw: number[] = [];
@@ -316,7 +328,7 @@ export function fitTerms(comps: Comp[], bounds: { lo: number; hi: number } = { l
   const hold = o.hold_on
     ? huberLine(comps.map((c) => holdRegressor(c.age_years)), afterGrowth, ws, o.hold_lo, o.hold_hi)
     : { a: 0, b: 0, lo: o.hold_lo, hi: o.hold_hi, pinned: 'free' as const, n: comps.length };
-  return { line, category, family, growth: { level, slope, n: gy.length }, hold: { a: hold.a, b: hold.b, lo: hold.lo, hi: hold.hi } };
+  return { line, category, family, chain, growth: { level, slope, n: gy.length }, hold: { a: hold.a, b: hold.b, lo: hold.lo, hi: hold.hi } };
 }
 
 /** Tilts with each value held inside a cap, in logs; the raw mean is kept as fitted. */
@@ -330,6 +342,7 @@ export function ratioUnder(fit: Fit, c: CompLike): number {
   return exp(
     fit.line.a + fit.line.b * log(clip(c.tvl_usd, TVL_FLOOR_USD, TVL_CEIL_USD))
     + tiltValue(fit.category, c.category) + tiltValue(fit.family, c.family)
+    + tiltValue(fit.chain, chainOf(c))
     + growthTerm(c.growth_pct, fit.growth.level, fit.growth.slope)
     + holdTerm(fit.hold, c.age_years),
   );
@@ -341,6 +354,7 @@ export function ratioUnderAt(fit: Fit, c: CompLike, bounds: { lo: number; hi: nu
   return exp(
     fit.line.a + b * log(clip(c.tvl_usd, TVL_FLOOR_USD, TVL_CEIL_USD))
     + tiltValue(fit.category, c.category) + tiltValue(fit.family, c.family)
+    + tiltValue(fit.chain, chainOf(c))
     + growthTerm(c.growth_pct, fit.growth.level, fit.growth.slope)
     + holdTerm(fit.hold, c.age_years),
   );
@@ -394,6 +408,7 @@ export function fitComps(protocols: Protocol[], asOf: string, bounds: { lo: numb
     line: fit.line,
     category: fit.category,
     family: fit.family,
+    chain: fit.chain,
     growth: fit.growth,
     hold: fit.hold,
     follow: { a: follow.a, b: follow.b, from_years: follow.from },

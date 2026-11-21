@@ -3,212 +3,72 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Launch Radar — 198 early protocols, the fit held out of sample</title>
-<meta name="description" content="Ronde 2: the cover line is refitted with its age term dropped, then tested on tokens it never saw, on listings it never saw, and on a split it never saw. Every figure the held-out fit gets wrong is published above the 198-row board it prices.">
-<meta name="color-scheme" content="light only">
-<meta name="theme-color" content="#f6f2e8">
-<script>document.documentElement.classList.add('js');</script>
-<link rel="stylesheet" href="radar.css">
+<title>Launch Radar — comps-fitted token launch radar</title>
+<link rel="stylesheet" href="app.css">
+<script src="zdata.js"></script>
+<script src="app.js" defer></script>
 </head>
 <body>
-<a class="skip" href="#valid">Skip to the validation</a>
-
-<header class="masthead">
-  <div class="wrap masthead-row">
-    <div class="ident">
-      <svg class="mark" viewBox="0 0 44 44" role="img" aria-label="The Launch Radar mark: four sweep rings and a needle">
-        <g fill="none" stroke="currentColor" stroke-width="1.8">
-          <circle cx="22" cy="22" r="4" class="mark-dot"></circle>
-          <path d="M22 13.5a8.5 8.5 0 0 1 8.5 8.5"></path>
-          <path d="M22 8a14 14 0 0 1 14 14"></path>
-          <path d="M22 2.5A19.5 19.5 0 0 1 41.5 22"></path>
-        </g>
-        <path d="M22 22 35.5 7.5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" class="mark-needle"></path>
-      </svg>
-      <div class="ident-text">
-        <p class="wordmark">Launch&nbsp;Radar</p>
-        <p class="ident-sub"><span class="stamp">ronde&nbsp;2</span> <span aria-hidden="true">·</span> token-radar · an entry for make.fun</p>
-      </div>
-    </div>
-    <div class="mast-right">
-      <p class="snapshot" id="snapshot">reading the sealed snapshot…</p>
-      <p class="mast-refit" id="mast-refit">refit on <span id="refit-n">81</span> held-out comps</p>
-    </div>
+<header class="mast">
+  <div>
+    <p class="kicker">Token Radar · an entry for make.fun</p>
+    <h1>Launch Radar</h1>
+    <p class="sub">Comps-fitted value, tested blind and walk-forward. Every pre-token protocol priced off the 81 tokens that already trade, with a farm plan netted to the dollar.</p>
   </div>
-  <div class="wrap lede">
-    <p class="eyebrow">The second round asks the question round one only promised to ask</p>
-    <h1>Last round this radar priced a launch. This round it prices its own record.</h1>
-    <p class="dek">Ronde 2 keeps the one cover line and drops the term that earned its keep least — the record of days — then hands the refit to <strong>81 tokens it has never seen</strong>, to <strong>listings it has never seen</strong>, and to <strong>a split of the clock it never saw</strong>. The misses are printed above the board, in full, because a line that is wrong by 2.58× on a token it forgot is more honest than a line that looks exact because it memorised the pool. Below the numbers sit the <strong id="lede-rows">198</strong> early protocols it prices, each with its own plan.</p>
-  </div>
-  <div class="wrap"><div class="edition-strip" aria-hidden="true">
-    <span>snapshot 2026-11-14</span><span>758 protocols</span><span>416 tokenised</span><span>81 comps</span><span>40 watchlist</span><span>198 priced</span><span>one horizon, one year</span>
-  </div></div>
+  <dl class="mast-nums" id="mast-nums"></dl>
 </header>
-
-<main class="wrap">
-
-  <!-- ============================== VALIDATION, FIRST ============================== -->
-  <section class="valid" id="valid" aria-labelledby="valid-title">
-    <header class="valid-head">
-      <div>
-        <p class="kicker">The answer, before the board</p>
-        <h2 id="valid-title">Three ways to be wrong, and how wrong the fit is on each</h2>
-      </div>
-      <p class="valid-dek">A cover line fitted on 81 traded tokens can always be made to look right on those same 81. These three columns refuse that: each prices tokens the line did not fit on. The headline is the median miss — how far, in multiples, a priced cover lands from the cover the token went on to record. Lower is better; within-3× is the share of reads that land inside a factor of three.</p>
-    </header>
-
-    <ol class="headline" id="headline" aria-label="The three held-out tests, side by side"></ol>
-
-    <div class="valid-grid">
-      <figure class="scatter-fig" aria-labelledby="scatter-title">
-        <figcaption id="scatter-title">
-          <span class="fig-no">Fig. 1</span>
-          <span class="fig-cap">The line against the market, 81 comps. Each dot is a traded token at its own record on the fit day: what the ronde-2 fit reads on its x-axis, what the token’s market cap per dollar of TVL actually was on its y-axis. The diagonal is a perfect read; the shaded band is 3× either side. Dots <strong>above</strong> the diagonal carry more cover than the line gives them; dots <strong>below</strong> carry less.</span>
-        </figcaption>
-        <div class="scatter-canvas" id="scatter" role="img" aria-describedby="scatter-note"></div>
-        <div class="scatter-legend" id="scatter-key"></div>
-        <p class="fig-note" id="scatter-note"></p>
-        <table class="viz-data" id="scatter-data" aria-label="The 81 comps the scatter plots, read and actual cover"></table>
-      </figure>
-
-      <div class="side">
-        <div class="ablation" aria-labelledby="abl-title">
-          <h3 id="abl-title">What each term is worth, by taking it away</h3>
-          <p class="ablation-dek">Leave-one-out again, with one term held out at a time. A term worth keeping pushes the median miss <em>up</em> when it leaves — the bar runs right. A term that changes nothing is a term the fit should not charge for.</p>
-          <ol class="abl-list" id="ablation"></ol>
-        </div>
-
-        <div class="fitcard" aria-labelledby="fit-title">
-          <h3 id="fit-title">The line this round settled on</h3>
-          <p class="fit-eq" id="fit-eq"></p>
-          <p class="fit-why" id="fit-why"></p>
-          <dl class="fit-tilts" id="fit-tilts"></dl>
-        </div>
-      </div>
+<dl class="kpi" id="kpi" aria-label="Evidence strip"></dl>
+<main>
+<section class="proof" aria-label="Out-of-sample record">
+  <h2>Tested on tokens the fit never saw</h2>
+  <p class="proof-note">Each token is priced by a fit that excludes it. Within 3× is the share read between a third and three times the cover the token records.</p>
+  <ul id="proof" class="proof-cards"></ul>
+</section>
+<section class="board" aria-label="The board">
+  <div class="board-head">
+    <div>
+      <h2 id="board-title">198 pre-token protocols, priced</h2>
+      <p id="board-sub" class="muted"></p>
     </div>
-
-    <div class="splits" aria-labelledby="splits-title">
-      <h3 id="splits-title">Every split, laid out</h3>
-      <div class="tablewrap" tabindex="0" role="region" aria-labelledby="splits-title">
-        <table class="splits-table" id="splits-table">
-          <thead>
-            <tr>
-              <th scope="col" class="c-test">Test</th>
-              <th scope="col" class="c-num">Held out</th>
-              <th scope="col" class="c-num">Median miss</th>
-              <th scope="col" class="c-bar">Within 3×</th>
-              <th scope="col" class="c-num">Within 2×</th>
-              <th scope="col" class="c-num">Bias</th>
-              <th scope="col" class="c-num">ρ</th>
-            </tr>
-          </thead>
-          <tbody id="splits-body"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="duel" aria-labelledby="duel-title">
-      <h3 id="duel-title">Ronde 1, for the record</h3>
-      <p class="duel-dek">The same 81 comps, the same three tests, the fit this radar shipped last round — age term kept, growth free, priors 3/6. Ronde 2 wins all three. It should: it was tuned to win the first. That is why the ablation above is published next to it.</p>
-      <div class="duel-grid" id="duel"></div>
-    </div>
-  </section>
-
-  <!-- ============================== THE BOARD ============================== -->
-  <section class="board-wrap" id="board" aria-labelledby="board-title">
-    <header class="board-head">
-      <div>
-        <p class="kicker">The board</p>
-        <h2 id="board-title">198 protocols still waiting on a token, priced by the fit above</h2>
-        <p class="board-dek">Ranked by implied value one year past each listing day — <code>TVL × cover</code>, with the cover read by the ronde-2 line at the protocol’s category, family, seven-day growth and record. A name opens its arithmetic, its cohort and its whole plan. No row here is written into this page’s script; every one is read from the file beside it.</p>
-      </div>
-      <div class="verdict-key" id="verdict-counts" aria-label="Verdict counts across all rows"></div>
-    </header>
-
-    <form class="filters" id="filters" role="search" aria-label="Filter and sort the board" autocomplete="off">
-      <fieldset class="verdict-filter">
-        <legend>Plan</legend>
-        <div class="segs" id="verdict-segs" role="group" aria-label="Filter by plan"></div>
-      </fieldset>
-      <div class="field field--q">
-        <label for="q">Name, category or symbol</label>
-        <input id="q" type="search" name="q" placeholder="curator, rwa, lent…" spellcheck="false">
-      </div>
-      <div class="field">
-        <label for="cohort">Cohort</label>
-        <select id="cohort" name="cohort">
-          <option value="all">All rows</option>
-          <option value="watchlist">Watchlist</option>
-          <option value="above floor">Above the floor</option>
-          <option value="below floor">Below the floor</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="family">Family</label>
-        <select id="family" name="family"><option value="all">Every family</option></select>
-      </div>
-      <div class="field field--sort">
-        <label for="sort">Sort</label>
-        <select id="sort" name="sort">
-          <option value="rank">Rank</option>
-          <option value="value">Implied value</option>
-          <option value="tvl">TVL</option>
-          <option value="cover">Cover</option>
-          <option value="growth">7-day</option>
-          <option value="net">Net if launch</option>
-          <option value="name">Name</option>
-        </select>
-      </div>
-      <button type="button" class="btn btn--quiet" id="reset">Reset</button>
-      <p class="filter-result" id="filter-result" role="status" aria-live="polite"></p>
-    </form>
-
-    <div class="tablewrap tablewrap--board" role="region" aria-labelledby="board-caption" tabindex="0">
-      <table class="board" aria-describedby="board-caption">
-        <caption id="board-caption" class="sr-only">The 198 early protocols, ranked</caption>
-        <thead>
-          <tr>
-            <th scope="col" class="c-rank" data-sort="rank" aria-sort="ascending"><button type="button"><span class="sortlbl">Rank</span></button></th>
-            <th scope="col" class="c-proto" data-sort="name"><button type="button"><span class="sortlbl">Protocol</span></button></th>
-            <th scope="col" class="c-fam" data-sort="family"><button type="button"><span class="sortlbl">Family</span></button></th>
-            <th scope="col" class="c-tvl" data-sort="tvl"><button type="button"><span class="sortlbl">TVL</span></button></th>
-            <th scope="col" class="c-growth" data-sort="growth"><button type="button"><span class="sortlbl">7 d</span></button></th>
-            <th scope="col" class="c-rec"><button type="button" disabled><span class="sortlbl">Record</span></button></th>
-            <th scope="col" class="c-cover" data-sort="cover"><button type="button"><span class="sortlbl">Cover now × implied</span></button></th>
-            <th scope="col" class="c-value" data-sort="value"><button type="button"><span class="sortlbl">Implied, one year out</span></button></th>
-            <th scope="col" class="c-net" data-sort="net"><button type="button"><span class="sortlbl">Net if it launches</span></button></th>
-            <th scope="col" class="c-plan"><button type="button" disabled><span class="sortlbl">Plan</span></button></th>
-          </tr>
-        </thead>
-        <tbody id="rows"></tbody>
-      </table>
-    </div>
-    <nav class="pager" id="pager" aria-label="Board pages">
-      <button type="button" class="btn btn--quiet" id="prev">← Previous 40</button>
-      <span class="pager-count" id="pageinfo"></span>
-      <button type="button" class="btn btn--quiet" id="next">Next 40 →</button>
-    </nav>
-  </section>
-
-  <section class="account" aria-labelledby="acct-title">
-    <h2 id="acct-title">Every protocol the snapshot holds, accounted for</h2>
-    <p>The board is a choice, not the whole file. This is what sits outside it, and why.</p>
-    <div class="acct" id="acct"></div>
-  </section>
-</main>
-
-<footer class="colophon">
-  <div class="wrap">
-    <p><strong>What this does not claim.</strong> Nothing here predicts whether or when a protocol issues a token. The fit prices a record at one stated horizon from the market’s own answer for tokens of the same size, family and shape; the held-out figures are the fit’s error on tokens it forgot, not a promise on any protocol. A protocol with no token on record may still carry one the snapshot does not hold. Nothing is investment advice, and every plan rests on the assumptions printed in its own arithmetic.</p>
-    <p class="colophon-foot" id="colophon"></p>
+    <div class="tally" id="tally"></div>
   </div>
+  <form class="filters" id="filters" onsubmit="return false">
+    <div class="segs" id="verdict-segs" role="group" aria-label="Plan verdict"></div>
+    <label>Search <input id="q" type="search" placeholder="name, category or symbol" autocomplete="off"></label>
+    <label>Cohort <select id="cohort"><option value="">All rows</option><option value="watchlist">Watchlist</option><option value="below floor">Below floor</option><option value="above floor">Above floor</option></select></label>
+    <label>Family <select id="family"><option value="">Every family</option></select></label>
+    <label>Sort <select id="sort"><option value="rank">Rank</option><option value="value">Implied value</option><option value="tvl">TVL</option><option value="net">Net if it launches</option><option value="cover">Implied cover</option></select></label>
+    <button id="reset" type="button">Reset</button>
+  </form>
+  <p id="filter-result" class="muted"></p>
+  <div class="tablewrap tablewrap--board">
+    <table>
+      <thead><tr><th>#</th><th>Protocol</th><th>Family</th><th class="num">TVL</th><th class="num">7d</th><th>Record</th><th class="num">Implied cover</th><th class="num">Implied value</th><th class="num">Net if it launches</th><th>Plan</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div class="pager"><button id="prev" type="button">← Prev</button><span id="pageinfo"></span><button id="next" type="button">Next →</button></div>
+</section>
+<section class="model" aria-label="The model and its test">
+  <h2>One model prices the board and the page</h2>
+  <p id="model-line" class="muted"></p>
+  <div class="model-grid">
+    <figure id="scatter"><figcaption>Fig. 1 — The line against the market, 81 comps. Each dot is a traded token at its own record on the fit; the diagonal is exact.</figcaption></figure>
+    <div>
+      <h3>What each term is worth, by taking it away</h3>
+      <ul id="ablation" class="ablation"></ul>
+      <h3>Later listings, read by earlier fits</h3>
+      <table class="splits"><thead><tr><th>From</th><th class="num">Test</th><th class="num">Within 3×</th><th class="num">Rank ρ</th></tr></thead><tbody id="splits-body"></tbody></table>
+      <p id="duel" class="muted"></p>
+      <p id="acct" class="muted"></p>
+    </div>
+  </div>
+</section>
+</main>
+<footer>
+  <p id="colophon"></p>
+  <p class="muted">A protocol is listed as pre-token when its DefiLlama record carries no token — the record is not proof it has none. Implied value is this entry's own claim, never make.fun's. No network: this page renders offline from the data beside it.</p>
 </footer>
-
-<dialog class="sheet" id="sheet" aria-labelledby="sheet-name" closedby="any">
-  <div class="sheet-inner" id="sheet-inner"></div>
-</dialog>
-
-<script src="data.js"></script>
-<script src="radar.js"></script>
+<dialog id="sheet"><div id="sheet-body"></div><form method="dialog"><button class="close" aria-label="Close">×</button></form></dialog>
 </body>
 </html>

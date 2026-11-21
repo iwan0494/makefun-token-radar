@@ -35,15 +35,19 @@ export const SLICE = {
   hours_per_week: 1.5,
   /**
    * The share of the band-floor value a reader's clip names, if the launch lands and names it.
-   * Swept from the pool's own distribution (scripts/pool-check.ts): 0,0012 names 31 Worth / 35
-   * Marginal / 132 Skip of 198 — the same proportions as the board's best entry; a larger share
-   * lets the gross outrun the cost for almost every row.
+   * Swept from the pool's own distribution (scripts/pool-check.ts): 0,0012 names 22 Worth / 46
+   * Marginal / 130 Skip of 198 with the near miss paying nothing — a larger share lets the gross
+   * outrun the cost for almost every row.
    */
   capture: 0.0012,
   chance_floor: 0.08,
   chance_ceiling: 0.5,
-  /** The share of the band-floor value a near miss still pays: a token that lands below the floor wicks. */
-  wick_fraction: 0.2,
+  /** What a near miss pays: nothing. A token that lands below the band pays this clip nothing — the
+   * deposit itself comes back on exit, only the gas, yield given up, exit and time are lost. Ronde 2
+   * paid a near miss 20% of the gross, so a big row's wick alone covered its whole cost and its
+   * break-even odds read 0%: a plan that pays whatever happens is not a plan. With the wick at zero
+   * the break-even is the cost over the gross, a real positive share on every row. */
+  wick_fraction: 0,
   /** The band's half-width in logs: the same range lib/board.ts prices every row's low/high band at. */
   band_log: 0.9,
   /** What an hour of the reader's time is worth, in whole dollars. */
@@ -251,14 +255,14 @@ export function economicsFor(
   const gross = basis * SLICE.capture;
   const wick = gross * SLICE.wick_fraction;
   const odds = launchChance(p.change_7d, originDays);
-  // The break-even odds: the chance at which the game's expectation, gross at the top and the wick at
-  // the bottom, pays every cost on the way. It is 1 when even a certain launch never covers the cost,
-  // and 0 when the wick alone already does; in between it is a real share of the odds (0 to 1).
+  // The break-even odds: the chance at which the game's expectation pays every cost on the way. A
+  // near miss pays nothing, so it is the cost over the gross: 1 when even a certain launch never
+  // covers the cost, a positive share otherwise, never 0 while the cost is positive.
   const swing = Math.max(gross - wick, 0);
   const rawBreakEven = swing > 0 ? (cost - wick) / swing : (cost <= wick ? 0 : 1);
   const breakEven = clip(rawBreakEven, 0, 1);
-  // The record rolled into one number: the launch pays the gross, a near miss the wick, either way the
-  // costs are paid; and how far that expectation moves at the chance's upper bound.
+  // The record rolled into one number: the launch pays the gross, a near miss pays nothing, either
+  // way the costs are paid; and how far that expectation moves at the chance's upper bound.
   const expected = odds * gross + (1 - odds) * wick - cost;
   const atCeiling = SLICE.chance_ceiling * gross + (1 - SLICE.chance_ceiling) * wick - cost;
   const planSwing = atCeiling - expected;
@@ -267,7 +271,7 @@ export function economicsFor(
   const perHour = hours > 0 ? net / hours : net;
   let verdict: Economics['verdict'];
   let reason: string;
-  const oddsText = `${Math.round(breakEven * 100)}% launch odds`;
+  const oddsText = `${pctOdds(breakEven)} launch odds`;
   if (net <= 0) {
     verdict = 'Skip';
     reason = `a launch at the ${usd(basis)} floor pays ${usd(gross)} against ${usd(cost)} of cost, so the net is ${usd(net)} and no odds clear it`;
@@ -322,6 +326,13 @@ export function launchChance(growthPct: number | null, originDays: number): numb
   return Math.round(clip(base, SLICE.chance_floor, SLICE.chance_ceiling) * 100) / 100;
 }
 
+/** A share of odds in words, with one decimal, never rounded to a false 0%: 4.5%, 0.1%, <0.1%. */
+export function pctOdds(x: number): string {
+  if (x <= 0) return '0%';
+  if (x < 0.0005) return '<0.1%';
+  return `${(x * 100).toFixed(1)}%`;
+}
+
 /** A clip as a share of the protocol's own TVL, in words: "0.001% of its TVL". */
 export function shareOf(amount: number, tvl: number): string {
   const pct = (amount / tvl) * 100;
@@ -354,7 +365,9 @@ export function farmPlan(
     : `DefiLlama has counted ${p.name} for ${span(aged)} without a token on record, which the radar prices at ${usd(value)} one year after its listing day: ${usd(economics.basis_usd)} at the band's low end.`;
   const growth = p.change_7d === null
     ? `The snapshot reports no seven-day change, so the growth term is flat and the odds rest on the record alone: ${odds}% over ${days}.`
-    : `TVL is ${p.change_7d > 0 ? 'up' : 'down'} ${Math.abs(p.change_7d).toFixed(1)}% in seven days; with the record that puts launch odds at ${odds}% over ${days}.`;
+    : Math.abs(p.change_7d) < 0.05
+      ? `TVL is flat over seven days; with the record that puts launch odds at ${odds}% over ${days}.`
+      : `TVL is ${p.change_7d > 0 ? 'up' : 'down'} ${Math.abs(p.change_7d).toFixed(1)}% in seven days; with the record that puts launch odds at ${odds}% over ${days}.`;
   const steps = [
     record,
     `Its TVL is ${usd(p.tvl_usd)} on ${chain}${secondary === null ? '' : ` and ${secondary}`}, so a ${capital} deposit is ${shareOf(economics.capital_usd, p.tvl_usd)}: small enough to stay in through a bad week.`,
@@ -364,7 +377,7 @@ export function farmPlan(
     `The window is ${days} of work at ${SLICE.hours_per_week} h a week: ${career.routine.toLowerCase()}; at ${usd(SLICE.hour_usd)} an hour that time is worth ${usd(economics.time_cost_usd)}, and the plan is read with it counted.`,
     `The deposit earns nothing here that it would not earn idle: at ${(SLICE.idle_yield_per_year * 100).toFixed(1)}% a year it gives up ${usd(economics.deposit_cost_usd)} over the window, which a genuine position should beat before its token is counted.`,
     `Before the first deposit, read this lock: ${career.lock}. The main risk is this: ${career.risk.toLowerCase()}; if it happens, exit at once and write the plan off rather than adding to it.`,
-    `On day ${Math.round(economics.days)}, withdraw and route out on ${chain} for about ${usd(economics.exit_usd)} of exit cost: with a near miss paying ${usd(economics.wick_usd)}, the plan needs ${Math.round(economics.break_even * 100)}% launch odds against ${odds}% on the record, and the verdict is ${economics.verdict}: ${economics.reason}.`,
+    `On day ${Math.round(economics.days)}, withdraw and route out on ${chain} for about ${usd(economics.exit_usd)} of exit cost: a near miss pays nothing, so the plan needs ${pctOdds(economics.break_even)} launch odds against ${odds}% on the record, and the verdict is ${economics.verdict}: ${economics.reason}.`,
   ];
   return { steps, economics };
 }

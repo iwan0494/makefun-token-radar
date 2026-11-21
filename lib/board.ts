@@ -9,7 +9,7 @@
 // whether either is worth a reader's week, and it reads its payoff at the band's tenth percentile, not the
 // middle. Traded tokens are set aside and counted.
 
-import { clip, daysBetween, exp, familyOf, fitComps, growthTerm, holdTerm, log, recordsToken, tiltValue } from './comps.ts';
+import { chainOf, clip, daysBetween, exp, familyOf, fitComps, growthTerm, holdTerm, log, recordsToken, tiltValue } from './comps.ts';
 import type { Comps, Protocol, Snapshot } from './types.ts';
 import { farmPlan, type Economics } from './farm.ts';
 
@@ -22,6 +22,7 @@ export interface RowModel {
   line_log: number;
   category_log: number;
   family_log: number;
+  chain_log: number;
   growth_log: number;
   hold_log: number;
   origin: 'counted' | 'snapshot';
@@ -45,7 +46,8 @@ export interface Row {
   ratio_low: number;
   ratio_p50: number;
   ratio_high: number;
-  cover_now: number;
+  /** The row's own fitted cover (market cap per dollar of TVL at the horizon): it differs per row, never a pool constant. */
+  implied_cover: number;
   tvl_usd: number;
   change_7d: number | null;
   listed_at: string | null;
@@ -70,6 +72,10 @@ export interface Coverage {
   no_listing_day: number;
   traded_set_aside: number;
   early_left_out: number;
+  /** Why the 144 early protocols that are not on the board were set aside, by the same rules. */
+  left_out: { sheets: number; bridges: number; wrapped: number; versioned: number; exchange: number };
+  /** Why the traded tokens that are not comps did not anchor the fit. */
+  traded_detail: { with_cover: number; near_listing: number; out_of_bounds: number; no_mcap: number };
   traded_notes: Array<{ slug: string; name: string; reason: string }>;
 }
 
@@ -86,7 +92,7 @@ const VERSIONED = /\s(v\d+(\.\d+)?|\d+\.\d+)$/i;
 const EXCHANGE = /^(binance|coinbase|bybit|kraken|bitget|okx|bitfinex|gemini)/i;
 const SHEET_CATEGORIES = new Set(['CEX', 'Bridge', 'Canonical Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC']);
 
-/** Whether a no-token record is an early protocol a launch could still name, rather than a wrapper or a sheet. */
+/** Why a no-token record is an early protocol a launch could still name, rather than a wrapper or a sheet. */
 export function isEarly(p: Protocol): boolean {
   return !recordsToken(p)
     && !WRAPPED.test(p.name)
@@ -94,6 +100,16 @@ export function isEarly(p: Protocol): boolean {
     && !VERSIONED.test(p.name)
     && !EXCHANGE.test(p.name)
     && !(p.category !== null && SHEET_CATEGORIES.has(p.category));
+}
+
+/** The one reason a no-token protocol was set aside from the board, in the order the rules apply. */
+export function leftOutReason(p: Protocol): 'sheets' | 'bridges' | 'wrapped' | 'versioned' | 'exchange' | null {
+  if (WRAPPED.test(p.name)) return 'wrapped';
+  if (BRIDGED.test(p.name)) return 'bridges';
+  if (VERSIONED.test(p.name)) return 'versioned';
+  if (EXCHANGE.test(p.name)) return 'exchange';
+  if (p.category !== null && SHEET_CATEGORIES.has(p.category)) return 'sheets';
+  return null;
 }
 
 /** A protocol's origin: its listing day when it records one, else the snapshot day. */
@@ -115,10 +131,11 @@ export function termsOf(model: Comps, p: Protocol, asOf: string): { terms: RowMo
   const line_log = model.line.a + model.line.b * log(clip(p.tvl_usd, 5_000_000, 1e12));
   const category_log = tiltValue(model.category, p.category);
   const family_log = tiltValue(model.family, family);
+  const chain_log = tiltValue(model.chain, chainOf(p));
   const growth_log = growthTerm(p.change_7d, model.growth.level, model.growth.slope);
   const hold_log = holdTerm(model.hold, priced);
-  const ratioLog = line_log + category_log + family_log + growth_log + hold_log;
-  return { terms: { line_log, category_log, family_log, growth_log, hold_log, origin, origin_days: days, priced_age_years: priced }, ratioLog };
+  const ratioLog = line_log + category_log + family_log + chain_log + growth_log + hold_log;
+  return { terms: { line_log, category_log, family_log, chain_log, growth_log, hold_log, origin, origin_days: days, priced_age_years: priced }, ratioLog };
 }
 
 /** Why a traded token is not on the ranked board: the snapshot's own record, in one line. */
@@ -174,7 +191,7 @@ export function buildRadar(snapshot: Snapshot, given?: Comps): Radar {
       ratio_low: ratio * exp(-BAND_LOG),
       ratio_p50: ratio,
       ratio_high: ratio * exp(BAND_LOG),
-      cover_now: model.cover.p50,
+      implied_cover: ratio,
       tvl_usd: p.tvl_usd,
       change_7d: p.change_7d,
       listed_at: p.listed_at,
@@ -190,6 +207,13 @@ export function buildRadar(snapshot: Snapshot, given?: Comps): Radar {
   });
   const traded = snapshot.protocols.filter(recordsToken);
   const earlyAll = snapshot.protocols.filter((p) => !recordsToken(p));
+  const leftOut = { sheets: 0, bridges: 0, wrapped: 0, versioned: 0, exchange: 0 };
+  for (const p of earlyAll) {
+    if (isEarly(p)) continue;
+    const reason = leftOutReason(p);
+    if (reason !== null) leftOut[reason] += 1;
+  }
+  const pool = model.pool;
   return {
     rows,
     model,
@@ -203,6 +227,13 @@ export function buildRadar(snapshot: Snapshot, given?: Comps): Radar {
       no_listing_day: rows.filter((r) => r.origin === 'snapshot').length,
       traded_set_aside: traded.length,
       early_left_out: earlyAll.length - early.length,
+      left_out: leftOut,
+      traded_detail: {
+        with_cover: pool.with_mcap,
+        near_listing: pool.near_listing,
+        out_of_bounds: pool.with_mcap - pool.near_listing - pool.comps,
+        no_mcap: pool.traded - pool.with_mcap,
+      },
       traded_notes: traded.filter((p) => watch.has(p.slug)).map((p) => ({ slug: p.slug, name: p.name, reason: tradedReason(p) })),
     },
   };

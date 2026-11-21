@@ -7,9 +7,9 @@ import { buildRadar } from '../lib/board.ts';
 import { economicsFor, clipFor, usd } from '../lib/farm.ts';
 import type { Snapshot } from '../lib/types.ts';
 
-const PATH = process.argv[2] ?? '/home/hatch/workspace/makefun/token-radar/kit/input/snapshot.json';
+const PATH = process.argv[2] ?? '/home/hatch/workspace/makefun/token-radar-r3-kit/token-radar-01-kit/input/snapshot.json';
 const snapshot = JSON.parse(readFileSync(PATH, 'utf8')) as Snapshot;
-const orbit = fitComps(snapshot.protocols, snapshot.as_of, { lo: -2, hi: 0.5 }, { hold_on: false });
+const orbit = fitComps(snapshot.protocols, snapshot.as_of, { lo: -2, hi: 0.5 }, { hold_lo: 0, hold_hi: 0.5 });
 const radar = buildRadar(snapshot, orbit);
 console.log('fit line a', orbit.line.a.toFixed(4), 'b', orbit.line.b.toFixed(4), 'hold', orbit.hold.a, orbit.hold.b, 'comps', orbit.pool.comps, 'p10', orbit.cover.p10);
 console.log('board rows', radar.rows.length, 'watch ranked', radar.coverage.watch_ranked);

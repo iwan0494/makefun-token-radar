@@ -1,24 +1,22 @@
-"""Render the ronde-2 Launch Radar dashboard with Camoufox and save its four screenshots.
+"""Render the ronde-3 Launch Radar dashboard with Camoufox and save its four screenshots.
 
 Usage: TMPDIR=/home/hatch/workspace/camoufox/tmp \
        /home/hatch/workspace/camoufox/venv/bin/python scripts/shots.py --out out --shots screenshots [--only 1,3]
 
 The page is opened from the copied output (out/dashboard/index.html) through file://, so every screen is
-the page's own script drawing its own data.js: nothing is injected. Each shot is a plain viewport capture
+the page's own script drawing its own zdata.js: nothing is injected. Each shot is a plain viewport capture
 after the page itself has been scrolled or filtered by a real click.
 
 Shots (1333x1067 viewport):
-  1-board.jpg    masthead + the three held-out headline figures + the start of the scatter
-  2-detail.jpg   the board, paged through to the last of the 198 rows and scrolled to that page's foot,
-                 before any filter
-  3-filtered.jpg the same board after clicking the Worth segment (31 of 198 rows), pager at page 1
-  4-model.jpg    the validation figure with the ablation beside it (about 817 px tall) and the detail sheet
-                 opened on Steakhouse Financial over it; the splits table is the figure's lower half,
-                 so it sits just under this frame
+  1-board.jpg    masthead + proof cards + the board's top rows (Worth, rank 1 first)
+  2-detail.jpg   the detail sheet open on rank 1, showing its arithmetic and the plan's money
+  3-filtered.jpg the same board after clicking the Worth segment (22 of 198 rows)
+  4-model.jpg    the validation figure: scatter, ablation and later-listing splits, no modal
 
-Size limits: every JPEG must be <= 256 KiB (262144 bytes). The loop walks the quality down from 94
-and stops at the first file that is <= the target (250 KiB, headroom under the hard cap). The dossier
-also wants the long side <= 1440 and the short side >= 800; the 1333x1067 viewport keeps both.
+Size limits: every JPEG must be <= 512 KiB (the gate cap). The loop walks the quality down from 94
+and stops at the first file that is <= the target (150 KiB): four shots near that size keep the
+dossier near 1 MB, in the range the leaderboard's top entries carry (450–780 KB), instead of the
+1.26 MB ronde 2 shipped.
 """
 import argparse
 import io
@@ -30,15 +28,15 @@ from camoufox.sync_api import Camoufox
 VIEW = {"width": 1333, "height": 1067}
 SCALE = 1.0
 SHOT_SIDE = (800, 1440)  # short min, long max
-HARD_CAP = 256 * 1024
-TARGET = 250 * 1024
+HARD_CAP = 512 * 1024
+TARGET = 150 * 1024
 QUALITIES = list(range(94, 20, -3))
 
 SHOTS = [
-    ("1-board.jpg", "masthead + headline + start of scatter"),
-    ("2-detail.jpg", "board opened on the last of its 198 rows, unfiltered"),
+    ("1-board.jpg", "masthead + proof cards + board top rows"),
+    ("2-detail.jpg", "detail sheet open on rank 1"),
     ("3-filtered.jpg", "board after a click on the Worth segment"),
-    ("4-model.jpg", "scatter + ablation, Steakhouse sheet open; splits are the same figure's lower half"),
+    ("4-model.jpg", "scatter + ablation + splits, no modal"),
 ]
 
 
@@ -60,27 +58,21 @@ def save_jpeg(page, path):
     raise SystemExit(f"{path.name} could not be fitted under {TARGET} bytes (last {last[0]} at q{last[1]})")
 
 
-def check(page, errors):
+def check(page):
     return page.evaluate("""() => {
       const q = (s) => document.querySelector(s);
       const all = (s) => Array.from(document.querySelectorAll(s));
       const sc = q('#scatter');
-      const marks = sc ? all('#scatter svg circle').filter(c => !c.classList.contains('mark-dot')).length : 0;
       return {
         rows: all('#rows tr').length,
-        headline: all('#headline li').length,
-        headlineText: all('#headline li .hl-x, #headline li b, #headline li strong').map(e => e.textContent.trim()).slice(0, 8),
+        proof: all('#proof li').length,
         ablation: all('#ablation li').length,
         splits: all('#splits-body tr').length,
-        duel: all('#duel > *').length,
         scatterNodes: sc ? sc.querySelectorAll('svg *').length : 0,
-        scatterCircles: marks,
-        scatterSize: sc ? [Math.round(sc.getBoundingClientRect().width), Math.round(sc.getBoundingClientRect().height)] : null,
         pageinfo: q('#pageinfo') ? q('#pageinfo').textContent : null,
         filterResult: q('#filter-result') ? q('#filter-result').textContent : null,
         sheetOpen: q('#sheet') ? q('#sheet').open : null,
         sheetName: q('#sheet-name') ? q('#sheet-name').textContent : null,
-        errors: 0
       };
     }""")
 
@@ -107,59 +99,47 @@ def main():
         page.goto(page_url, wait_until="load")
         page.wait_for_selector("#rows tr", timeout=20000)
         page.wait_for_timeout(800)
-        print("initial DOM", check(page, errors))
+        print("initial DOM", check(page))
         print("errors", errors)
 
         def want(idx):
             return not wanted or str(idx) in wanted
 
-        # 1 — masthead and the validation panel.
+        # 1 — masthead, proof cards, board top.
         if want(1):
             page.evaluate("window.scrollTo(0, 0)")
             page.wait_for_timeout(300)
             n, q = save_jpeg(page, shots / "1-board.jpg")
-            print("SHOT 1-board.jpg", n, "q", q, "scroll", page.evaluate("window.scrollY"))
+            print("SHOT 1-board.jpg", n, "q", q)
 
-        # 2 — the board paged to the end of its 198 rows, unfiltered.
+        # 2 — detail sheet on rank 1.
         if want(2):
             page.evaluate("window.scrollTo(0, 0)")
-            while page.locator("#next").is_enabled():
-                page.click("#next")
-            page.wait_for_timeout(300)
-            print("board-end DOM", check(page, errors))
-            page.evaluate("""() => {
-              const wrap = document.querySelector('.tablewrap--board');
-              wrap.scrollTop = wrap.scrollHeight;
-              const head = document.querySelector('.board-head');
-              window.scrollTo(0, Math.max(0, head.getBoundingClientRect().top + window.scrollY - 8));
-            }""")
-            page.wait_for_timeout(300)
+            page.click("#rows tr:first-child button[data-open]")
+            page.wait_for_selector("#sheet[open]", timeout=5000)
+            page.wait_for_timeout(500)
+            print("sheet DOM", check(page))
             n, q = save_jpeg(page, shots / "2-detail.jpg")
-            print("SHOT 2-detail.jpg", n, "q", q, "scroll", page.evaluate("window.scrollY"))
-            page.evaluate("document.querySelector('.tablewrap--board').scrollTop = 0")
-            page.click("#reset")
+            print("SHOT 2-detail.jpg", n, "q", q)
+            page.evaluate("document.querySelector('#sheet').close()")
             page.wait_for_timeout(300)
 
-        # 3 — the same board after a real click on the Worth verdict segment.
+        # 3 — the board after a real click on the Worth segment.
         if want(3):
-            page.click("#verdict-segs button[data-verdict='Worth']")
+            page.click("#verdict-segs button[data-v='0']")
             page.wait_for_timeout(400)
-            wrap_top = page.evaluate("() => { const w = document.querySelector('.tablewrap--board'); return [w.scrollTop, w.scrollHeight, w.clientHeight]; }")
-            print("filtered DOM", check(page, errors), "wrap", wrap_top, "firstRow", page.evaluate("() => { const r = document.querySelector('#rows tr'); const w = document.querySelector('.tablewrap--board'); return Math.round(r.getBoundingClientRect().top - w.getBoundingClientRect().top); }"))
+            print("filtered DOM", check(page))
             page.evaluate("""() => {
-              const wrap = document.querySelector('.tablewrap--board');
-              wrap.scrollTop = 0;
               const head = document.querySelector('.board-head');
               window.scrollTo(0, Math.max(0, head.getBoundingClientRect().top + window.scrollY - 8));
             }""")
             page.wait_for_timeout(300)
             n, q = save_jpeg(page, shots / "3-filtered.jpg")
-            print("SHOT 3-filtered.jpg", n, "q", q, "scroll", page.evaluate("window.scrollY"))
-            page.evaluate("document.querySelector('.tablewrap--board').scrollTop = 0")
+            print("SHOT 3-filtered.jpg", n, "q", q)
             page.click("#reset")
             page.wait_for_timeout(200)
 
-        # 4 — scatter + ablation + splits, then the Steakhouse sheet.
+        # 4 — scatter + ablation + splits, no modal.
         if want(4):
             page.evaluate("""() => {
               const sc = document.querySelector('#scatter').closest('figure');
@@ -167,18 +147,10 @@ def main():
               window.scrollTo(0, Math.max(0, top));
             }""")
             page.wait_for_timeout(300)
-            page.evaluate("""() => {
-              const tr = Array.from(document.querySelectorAll('#rows tr')).find(r => /steak/i.test(r.textContent));
-              tr.querySelector('button[data-open]').click();
-            }""")
-            page.wait_for_selector("#sheet[open]", timeout=5000)
-            page.wait_for_timeout(500)
-            print("sheet DOM", check(page, errors))
             n, q = save_jpeg(page, shots / "4-model.jpg")
-            print("SHOT 4-model.jpg", n, "q", q, "scroll", page.evaluate("window.scrollY"))
-            page.evaluate("document.querySelector('#sheet').close()")
+            print("SHOT 4-model.jpg", n, "q", q)
 
-        print("final DOM", check(page, errors))
+        print("final DOM", check(page))
         print("errors", errors)
         for name, desc in SHOTS:
             p = shots / name
