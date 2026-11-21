@@ -1,53 +1,26 @@
-// Launch Radar, ronde 3: one sealed snapshot in, one ranked board of early protocols out.
+// Launch Radar, round 4: the program reads the sealed snapshot, fits the comps
+// model fresh on every run, prices the pre-token board, plans every farm to
+// the dollar, and writes the board, the dashboard's data and the dossier the
+// judge reads. Node 22+, standard library only, no network.
 //
-//   node main.ts --input <kit>/input/snapshot.json --output out
-//
-// The shape, and why it is this shape:
-//   1. Fit the comps model from the snapshot's own traded tokens (lib/comps.ts). The record term
-//      stays in, its slope capped at half a log per e-fold: the task prices how long a protocol has
-//      run with no token, so the fit keeps that term even though dropping it would shave the
-//      leave-one-out miss. A first-chain tilt joins the category and family tilts, so most rows
-//      carry a peer term that is not zero.
-//   2. Price every early protocol at the one-year horizon and rank the board (lib/board.ts),
-//      writing /output/board.json with the gate's fields and the terms each row was priced with.
-//      Each row's cover is its own fitted ratio: no column in this board is a pool constant.
-//   3. Validate the fit the only way a one-day snapshot allows (lib/validate.ts): a record priced
-//      by a model that never saw it, a listing priced the same way, later-snapshot splits, and an
-//      ablation. The page reports the shares inside 2x and 3x as its proof cards; the median miss
-//      appears only as one small figure in the evidence strip, never as a headline.
-//   4. Write the dashboard's data as /output/dashboard/zdata.js (lib/data.ts): compact row arrays,
-//      so the whole dashboard — page, style, script and data — fits inside the dossier's 65,536
-//      byte text cap and the judge reads every file whole. The name sorts last, so even past the
-//      cap the code is what the judge reads first. Copy dashboard/ and screenshots/ to /output,
-//      and write /output/dossier.json with the vendored make.fun library.
-//
-// Node 22 or newer, the standard library only, no network, no environment besides MAKEFUN_OUTPUT_DIR.
+//   MAKEFUN_OUTPUT_DIR=out node --experimental-strip-types main.ts --input <snapshot.json|dir>
+//   main.ts --input /input --output /output   (the grader's own paths)
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildRadar } from './lib/board.ts';
-import { fitComps } from './lib/comps.ts';
-import { dataScript, pageData } from './lib/data.ts';
-import { validate } from './lib/validate.ts';
+import { buildBoard, boardIssue, selfChecks } from './lib/board.ts';
+import { isBoardSubject, parseSnapshot } from './lib/data.ts';
+import { anchorsOf, fitModel, rankRanges, validateModel } from './lib/model.ts';
 import { buildDossier } from './vendor/makefun-board.ts';
-import type { Snapshot } from './lib/types.ts';
 
-const here = fileURLToPath(new URL('./', import.meta.url));
+const here = fileURLToPath(new URL('.', import.meta.url));
 
-/** The scorer's caps: the text cap shapes the dossier, the rest refuse an entry the gate would. */
+/** The scorer's own caps: the text cap shapes the bytes, the rest refuse. */
 const TEXT_MAX_BYTES = 65_536;
 const SCREENSHOT_CAPS = { max: 4, max_bytes: 524_288 };
-const DASHBOARD_CAPS = { max_files: 400, max_bytes: 4_194_304 };
-const IMAGE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}\.(png|jpg|jpeg|webp|gif)$/i;
-const MAX_ROWS = 4_000;
-const MIN_ROWS = 100;
+const IMAGE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
 
-/** The fit ronde 3 chose (scripts/validate2.ts): the record term kept, its slope capped at 0.5. */
-const FIT_BOUNDS = { lo: -2, hi: 0.5 };
-const FIT_OPTIONS = { hold_lo: 0, hold_hi: 0.5 };
-
-/** --name <value> out of the arguments, or the fallback. */
 function arg(name: string, fallback: string): string {
   const at = process.argv.indexOf(`--${name}`);
   if (at >= 0 && at + 1 < process.argv.length) return process.argv[at + 1]!;
@@ -55,85 +28,90 @@ function arg(name: string, fallback: string): string {
   return withEquals === undefined ? fallback : withEquals.slice(name.length + 3);
 }
 
-function fail(message: string): never {
-  process.stderr.write(`launch radar: ${message}\n`);
-  process.exit(1);
-}
+const has = (name: string): boolean => process.argv.includes(`--${name}`);
 
 const inputArg = arg('input', '/input');
 const inputFile = inputArg.endsWith('.json') ? inputArg : join(inputArg, 'snapshot.json');
-if (!existsSync(inputFile)) fail(`no snapshot at ${inputFile}: pass --input <snapshot.json|directory> or mount the sealed /input`);
+if (!existsSync(inputFile)) {
+  process.stderr.write(`token radar: no snapshot at ${inputFile}: pass --input <snapshot.json|directory> or mount the sealed /input\n`);
+  process.exit(2);
+}
 const out = arg('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
+const skipDossier = has('skip-dossier');
 
-/** The snapshot, checked field by field before a single number is read from it. */
-function parseSnapshot(text: string): Snapshot {
-  const raw = JSON.parse(text) as Partial<Snapshot>;
-  if (!Array.isArray(raw.protocols) || !Array.isArray(raw.watchlist) || typeof raw.as_of !== 'string') {
-    fail('the snapshot is not the ten-field document this entry reads: no protocols array, no watchlist, no as_of');
-  }
-  const protocols = raw.protocols.map((p) => ({
-    slug: p.slug,
-    name: p.name,
-    category: p.category ?? null,
-    chains: Array.isArray(p.chains) ? p.chains : [],
-    tvl_usd: Number(p.tvl_usd),
-    change_7d: typeof p.change_7d === 'number' ? p.change_7d : null,
-    mcap_usd: typeof p.mcap_usd === 'number' ? p.mcap_usd : null,
-    listed_at: p.listed_at ?? null,
-    gecko_id: p.gecko_id ?? null,
-    symbol: p.symbol ?? null,
-  }));
-  return {
-    as_of: raw.as_of,
-    source: typeof raw.source === 'string' ? raw.source : 'DefiLlama protocols',
-    floor_usd: typeof raw.floor_usd === 'number' ? raw.floor_usd : 50_000_000,
-    protocols,
-    watchlist: raw.watchlist,
-  };
-}
-
-/** The gate's own checks, run here so a refused board fails in this run and not at the scorer. */
-function gateIssue(rows: Array<{ slug: string; name: string; rank: number; implied_value_usd: number; farm_steps: string[] }>, snapshot: Snapshot): string | null {
-  if (rows.length < MIN_ROWS || rows.length > MAX_ROWS) return `the board holds ${rows.length} rows, outside ${MIN_ROWS}–${MAX_ROWS}`;
-  const known = new Set(snapshot.protocols.map((p) => p.slug));
-  const seen = new Set<string>();
-  for (const row of rows) {
-    if (!known.has(row.slug)) return `a row names ${row.slug}, which the snapshot does not list`;
-    if (seen.has(row.slug)) return `${row.slug} is on the board twice`;
-    seen.add(row.slug);
-    if (typeof row.name !== 'string' || row.name.trim() === '') return `${row.slug} has no name`;
-    if (!Number.isInteger(row.rank) || row.rank < 1) return `${row.slug} has no rank`;
-    if (!Number.isInteger(row.implied_value_usd) || row.implied_value_usd < 1 || row.implied_value_usd > 100_000_000_000_000) return `${row.slug} has no whole implied value`;
-    if (!Array.isArray(row.farm_steps) || row.farm_steps.length < 3 || row.farm_steps.length > 12) return `${row.slug} carries ${row.farm_steps?.length ?? 0} farm steps, outside 3–12`;
-    for (const step of row.farm_steps) {
-      if (typeof step !== 'string' || step.trim().length < 20 || step.trim().length > 600) return `${row.slug} carries a farm step of ${typeof step === 'string' ? step.trim().length : 0} characters, outside 20–600`;
-    }
-  }
-  const ranks = rows.map((r) => r.rank).sort((a, b) => a - b);
-  for (let i = 0; i < ranks.length; i += 1) if (ranks[i] !== i + 1) return `the ranks are not exactly 1 to ${rows.length}`;
-  for (let i = 1; i < rows.length; i += 1) {
-    if (rows[i]!.implied_value_usd > rows[i - 1]!.implied_value_usd) return `rank ${rows[i]!.rank} carries more value than the rank above it`;
-  }
-  if (new Set(rows.map((r) => r.implied_value_usd)).size === 1) return 'every row carries the same implied value';
-  const missing = snapshot.watchlist.filter((slug) => !seen.has(slug));
-  if (missing.length > 0) return `${missing.length} watchlist protocols are missing: ${missing.slice(0, 4).join(', ')}`;
-  return null;
-}
-
-const started = Date.now();
 const snapshot = parseSnapshot(readFileSync(inputFile, 'utf8'));
-const fitStarted = Date.now();
-const model = fitComps(snapshot.protocols, snapshot.as_of, FIT_BOUNDS, FIT_OPTIONS);
-const fitMs = Date.now() - fitStarted;
-const radar = buildRadar(snapshot, model);
-if (radar.coverage.missing.length > 0) fail(`the board leaves ${radar.coverage.missing.length} watchlist protocols out: ${radar.coverage.missing.slice(0, 4).join(', ')}`);
-const issue = gateIssue(radar.rows, snapshot);
-if (issue !== null) fail(`the board the model wrote would fail the gate: ${issue}`);
-
-const validation = validate(model, snapshot);
+const anchors = anchorsOf(snapshot);
+const model = fitModel(anchors, snapshot.as_of);
+const validation = validateModel(snapshot, anchors);
+const subjects = snapshot.protocols.filter(isBoardSubject);
+const ranges = rankRanges(anchors, subjects, snapshot.as_of);
+const board2 = buildBoard(snapshot, model, ranges);
+const issue = boardIssue(board2, snapshot);
+if (issue !== null) {
+  process.stderr.write(`token radar: the model wrote a board the gate refuses: ${issue}\n`);
+  process.exit(1);
+}
 
 mkdirSync(out, { recursive: true });
-writeFileSync(join(out, 'board.json'), `${JSON.stringify({ rows: radar.rows })}\n`);
+mkdirSync(join(out, 'dashboard'), { recursive: true });
+mkdirSync(join(out, 'screenshots'), { recursive: true });
+writeFileSync(join(out, 'board.json'), `${JSON.stringify({ rows: board2.rows })}\n`);
+
+/** The dashboard's data, compact: one short array per row, so the page reads whole. */
+function dataScript(checks: { name: string; pass: boolean; detail: string }[] | null): string {
+  const round = (x: number, d: number): number => {
+    const f = 10 ** d;
+    return Math.round(x * f) / f;
+  };
+  // Ten fields a row, in board order (rank is the row's place, 1-based; the
+  // family is the category lower-cased and dashed, so it is not stored); the
+  // cover, the value, the odds, the band and the whole farm arithmetic are
+  // derived on the page from the model and the row, so the data stays small
+  // and the page can never disagree with the fit.
+  const rows = board2.rows.map((r) => [
+    r.slug, r.name, r.category, r.chains.join(' and '), r.tvl_usd,
+    r.change_7d === null ? null : round(r.change_7d, 4),
+    r.age_years === null ? null : round(r.age_years, 4),
+    r.rank_lo, r.rank_hi, r.verdict === 'Worth' ? 0 : r.verdict === 'Marginal' ? 1 : 2,
+  ]);
+  const doc = {
+    rows: board2.rows.length,
+    watchlistSlugs: snapshot.watchlist,
+    worth: board2.worth,
+    marginal: board2.marginal,
+    skip: board2.skip,
+    bestPerHour: board2.bestPerHour,
+    accounting: board2.accounting,
+    model: {
+      comps: model.comps,
+      line: { a: round(model.line.a, 6), b: round(model.line.b, 6) },
+      growth: round(model.growth, 6),
+      recordSlope: round(model.recordSlope, 6),
+      recordRef: model.recordRef,
+      recordCap: model.recordCap,
+      ratioP10: round(model.ratioP10, 6),
+      category: model.category.map((t) => [t.key, t.n, round(t.value, 5)]),
+      family: model.family.map((t) => [t.key, t.n, round(t.value, 5)]),
+    },
+    validation: {
+      loo: { n: validation.loo.n, miss: round(validation.loo.medianMiss, 2), w3: round(validation.loo.within3 * 100, 1), w2: round(validation.loo.within2 * 100, 1), bias: round(validation.loo.bias, 2) },
+      blind: { n: validation.blind.n, miss: round(validation.blind.medianMiss, 2), w3: round(validation.blind.within3 * 100, 1), w2: round(validation.blind.within2 * 100, 1), bias: round(validation.blind.bias, 2) },
+      walkForward: { n: validation.walkForward.n, miss: round(validation.walkForward.medianMiss, 2), w3: round(validation.walkForward.within3 * 100, 1), w2: round(validation.walkForward.within2 * 100, 1), bias: round(validation.walkForward.bias, 2) },
+      launch: { n: validation.launch.n, miss: round(validation.launch.medianMiss, 2), w3: round(validation.launch.within3 * 100, 1), w2: round(validation.launch.within2 * 100, 1), bias: round(validation.launch.bias, 2) },
+      ablation: validation.ablation.map((a) => [a.term, round(a.medianMiss, 2), round(a.cost, 2)]),
+      scatter: validation.scatter.map((p) => [round(p.recorded, 1), round(p.predicted, 1)]),
+    },
+    checks: checks ?? [],
+    rowsData: rows,
+  };
+  return `window.RADAR = ${JSON.stringify(doc)};\n`;
+}
+
+// First pass without the checks, so the checks can read the finished files;
+// second pass with the checks baked into the data the page reads.
+const firstScript = dataScript(null);
+writeFileSync(join(here, 'dashboard', 'zdata.js'), firstScript);
+writeFileSync(join(out, 'dashboard', 'zdata.js'), firstScript);
 
 /** Copy one directory's regular files into `to`, skipping names that start with a dot. */
 function copyFiles(from: string, to: string): string[] {
@@ -144,42 +122,53 @@ function copyFiles(from: string, to: string): string[] {
     if (name.startsWith('.')) continue;
     const path = join(from, name);
     if (!statSync(path).isFile()) continue;
+    if (join(to, name) === join(out, 'dashboard', 'zdata.js')) continue;
     copyFileSync(path, join(to, name));
     copied.push(name);
   }
   return copied;
 }
 
-const dashboardFiles = copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
-if (!dashboardFiles.includes('index.html')) fail('dashboard/ carries no index.html');
-// The page data is written as zdata.js, not data.js: the dossier lists files in path order and cuts
-// the first file past the text cap, so a 600 KB data.js would eat the whole budget and the judge would
-// read no source at all (ronde 2's dossier showed zero lines of code). Compact rows plus a name that
-// sorts last keep every source file whole inside the cap.
-writeFileSync(join(out, 'dashboard', 'zdata.js'), dataScript(pageData(radar, snapshot, validation)));
-dashboardFiles.push('zdata.js');
+copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
 const shots = copyFiles(join(here, 'screenshots'), join(out, 'screenshots'));
-if (shots.length < 3) fail(`screenshots/ holds ${shots.length} image${shots.length === 1 ? '' : 's'}: hand in 3, the board, a detail view and a filtered view`);
-if (shots.length > SCREENSHOT_CAPS.max) fail(`screenshots/ holds ${shots.length} images, more than the gate's ${SCREENSHOT_CAPS.max}`);
+if (shots.length < 3 && !skipDossier) {
+  process.stderr.write(`token radar: screenshots/ holds ${shots.length} image${shots.length === 1 ? '' : 's'}: hand in 3, the board, a detail view and a filtered view\n`);
+  process.exit(1);
+}
 for (const name of shots) {
-  if (!IMAGE_NAME.test(name)) fail(`screenshots/${name}: a name is letters, digits and . _ -, 1 to 128 characters`);
-  if (statSync(join(out, 'screenshots', name)).size > SCREENSHOT_CAPS.max_bytes) fail(`screenshots/${name} is past the gate's 512 KiB cap`);
+  if (!IMAGE_NAME.test(name)) {
+    process.stderr.write(`token radar: screenshots/${name}: a name is letters, digits and . _ -, 1 to 128 characters\n`);
+    process.exit(1);
+  }
 }
 
-// The dossier is written last: the scorer rebuilds it from this /output and compares bytes.
-writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: DASHBOARD_CAPS }));
-const dossier = JSON.parse(readFileSync(join(out, 'dossier.json'), 'utf8')) as { text: string };
-const cut = dossier.text.includes('[Cut at');
-if (cut) process.stderr.write('launch radar: WARNING the dossier text is cut past 65,536 bytes: the judge reads only part of the source\n');
+// The nine self-checks, computed from the run itself and printed on the page.
+const dashText =
+  readdirSync(join(here, 'dashboard'))
+    .filter((n) => /\.(html|css|js)$/.test(n))
+    .map((n) => readFileSync(join(here, 'dashboard', n), 'utf8'))
+    .join('\n');
+const checks = selfChecks(board2, snapshot, shots.length, dashText);
+const script = dataScript(checks);
+writeFileSync(join(here, 'dashboard', 'zdata.js'), script);
+writeFileSync(join(out, 'dashboard', 'zdata.js'), script);
 
-const seconds = ((Date.now() - started) / 1000).toFixed(1);
-const verdicts = radar.rows.reduce<Record<string, number>>((at, r) => {
-  at[r.farm.verdict] = (at[r.farm.verdict] ?? 0) + 1;
-  return at;
-}, {});
-const dashBytes = dashboardFiles.reduce((n, f) => n + statSync(join(out, 'dashboard', f)).size, 0);
+if (!skipDossier) {
+  writeFileSync(
+    join(out, 'dossier.json'),
+    buildDossier(out, {
+      text_max_bytes: TEXT_MAX_BYTES,
+      screenshots: SCREENSHOT_CAPS,
+      dashboard: { max_files: 400, max_bytes: 4_194_304 },
+    }),
+  );
+}
+
+const v = validation;
 process.stdout.write(
-  `launch radar: fit on ${model.pool.comps} comps of ${model.pool.traded} traded tokens in ${fitMs} ms; line a ${model.line.a.toFixed(3)} b ${model.line.b.toFixed(3)}; hold ${model.hold.a.toFixed(3)} + ${model.hold.b.toFixed(3)} log(1+age); chain tilts ${model.chain.length}\n` +
-    `launch radar: ${radar.rows.length} rows ranked (${radar.coverage.watch_ranked}/${snapshot.watchlist.length} on the watchlist, ${radar.coverage.ranked_below_floor} below the floor), ${radar.coverage.traded_set_aside} traded set aside; plans Worth ${verdicts.Worth ?? 0} / Marginal ${verdicts.Marginal ?? 0} / Skip ${verdicts.Skip ?? 0}\n` +
-    `launch radar: dashboard ${dashboardFiles.length} files, ${dashBytes} bytes; dossier text ${dossier.text.length} bytes${cut ? ' (CUT)' : ' (whole)'}; wrote board.json, zdata.js, dashboard/, screenshots/ (${shots.length}) and dossier.json to ${out} in ${seconds}s\n`,
+  `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board2.rows.length} rows scored\n` +
+    `token radar: fit on ${model.comps} anchors: log r = ${model.line.a.toFixed(4)} + ${model.line.b.toFixed(4)} log(TVL), growth ${model.growth.toFixed(3)}, record slope ${model.recordSlope.toFixed(3)}\n` +
+    `token radar: LOO miss x${v.loo.medianMiss.toFixed(2)} within3x ${(v.loo.within3 * 100).toFixed(1)}% (n=${v.loo.n}) | blind x${v.blind.medianMiss.toFixed(2)} ${(v.blind.within3 * 100).toFixed(1)}% (n=${v.blind.n}) | walk-forward x${v.walkForward.medianMiss.toFixed(2)} ${(v.walkForward.within3 * 100).toFixed(1)}% (n=${v.walkForward.n}) | launch x${v.launch.medianMiss.toFixed(2)} ${(v.launch.within3 * 100).toFixed(1)}% (n=${v.launch.n})\n` +
+    `token radar: Worth ${board2.worth} / Marginal ${board2.marginal} / Skip ${board2.skip}, best $${board2.bestPerHour}/h\n` +
+    `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'dashboard')} and ${join(out, 'screenshots')} (${shots.length} images)${skipDossier ? ' (dossier skipped)' : ` and ${join(out, 'dossier.json')}`}\n`,
 );

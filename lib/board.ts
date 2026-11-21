@@ -1,240 +1,231 @@
-// The board: who is ranked, in what order, and what a reader can do about each one.
-//
-// Ronde 2 ranks every early protocol the snapshot records: a no-token protocol a launch could still name,
-// with no wrapped or bridged product, no version of another protocol and no exchange's balance sheet in
-// the list. That is 198 rows, the 40 the house's watchlist names included, each priced by the cover its
-// record implies at one horizon (the token lists a year after its listing day; a protocol with no listing
-// day is read from the snapshot day and the row says so). Ranking by that value alone put a $2.7B
-// curator at the top and a $40M vault at the bottom; the farm plan beside each row is what decides
-// whether either is worth a reader's week, and it reads its payoff at the band's tenth percentile, not the
-// middle. Traded tokens are set aside and counted.
+// The ranked board: every pre-token protocol priced, planned and ordered, with
+// the rank range its own refits give it and the nine checks the page runs on
+// itself. The board is the entry's answer to "which protocol is worth farming
+// next, and what do I do about it" — sorted by implied value, never by TVL.
 
-import { chainOf, clip, daysBetween, exp, familyOf, fitComps, growthTerm, holdTerm, log, recordsToken, tiltValue } from './comps.ts';
-import type { Comps, Protocol, Snapshot } from './types.ts';
-import { farmPlan, type Economics } from './farm.ts';
+import {
+  accountFor,
+  ageYears,
+  daysBetween,
+  isBoardSubject,
+  usd,
+  type Protocol,
+  type Snapshot,
+} from './data.ts';
+import { economicsFor, farmPlan, pct1, type Economics } from './farm.ts';
+import { coverOf, termsOf, type Model } from './model.ts';
+import { SLICE } from './farm.ts';
 
-/** The horizon every row is priced at: years after a protocol's listing day. */
-export const PRICE_HORIZON_YEARS = 1;
-/** The band's half-width in logs: one fitted record covers about this much of its own peer range. */
-export const BAND_LOG = 0.9;
-
-export interface RowModel {
-  line_log: number;
-  category_log: number;
-  family_log: number;
-  chain_log: number;
-  growth_log: number;
-  hold_log: number;
-  origin: 'counted' | 'snapshot';
-  origin_days: number;
-  priced_age_years: number;
-}
-
-export interface Row {
+export interface BoardRow {
+  rank: number;
   slug: string;
   name: string;
-  rank: number;
-  implied_value_usd: number;
-  farm_steps: string[];
-  category: string | null;
-  family: string | null;
+  category: string;
+  family: string;
+  chain: string;
   chains: string[];
-  on_watchlist: boolean;
-  token_status: 'pre-token';
-  implied_value_low_usd: number;
-  implied_value_high_usd: number;
-  ratio_low: number;
-  ratio_p50: number;
-  ratio_high: number;
-  /** The row's own fitted cover (market cap per dollar of TVL at the horizon): it differs per row, never a pool constant. */
-  implied_cover: number;
   tvl_usd: number;
   change_7d: number | null;
   listed_at: string | null;
-  age_days: number | null;
-  origin: 'counted' | 'snapshot';
-  origin_days: number;
-  growth_state: 'reported' | 'unreported';
-  cohort: string;
-  /** The pool's tenth-percentile fitted ratio: the band end every plan is priced at. */
-  ratio_p10_floor: number;
-  farm: Economics;
-  model: RowModel;
+  age_years: number | null;
+  watchlist: boolean;
+  cover: number;
+  value_usd: number;
+  band_low_usd: number;
+  band_high_usd: number;
+  odds: number;
+  rank_lo: number;
+  rank_hi: number;
+  net_usd: number;
+  per_hour_usd: number;
+  break_even: number;
+  verdict: 'Worth' | 'Marginal' | 'Skip';
+  economics: Economics;
+  steps: string[];
+  terms: {
+    line: number;
+    category_log: number;
+    family_log: number;
+    growth_log: number;
+    record_log: number;
+    log_cover: number;
+  };
 }
 
-export interface Coverage {
-  watchlist: number;
-  watch_ranked: number;
-  missing: string[];
-  ranked: number;
-  ranked_above_floor: number;
-  ranked_below_floor: number;
-  no_listing_day: number;
-  traded_set_aside: number;
-  early_left_out: number;
-  /** Why the 144 early protocols that are not on the board were set aside, by the same rules. */
-  left_out: { sheets: number; bridges: number; wrapped: number; versioned: number; exchange: number };
-  /** Why the traded tokens that are not comps did not anchor the fit. */
-  traded_detail: { with_cover: number; near_listing: number; out_of_bounds: number; no_mcap: number };
-  traded_notes: Array<{ slug: string; name: string; reason: string }>;
+export interface Board {
+  rows: BoardRow[];
+  worth: number;
+  marginal: number;
+  skip: number;
+  bestPerHour: number;
+  capital: number;
+  expected: number;
+  accounting: ReturnType<typeof accountFor>;
 }
 
-export interface Radar {
-  rows: Row[];
-  coverage: Coverage;
-  model: Comps;
+export interface SelfCheck {
+  name: string;
+  pass: boolean;
+  detail: string;
 }
 
-/** The house's watchlist exclusions, as the board reads them. */
-const WRAPPED = /(^|\s)(wrapped|staked|staking)(\s|$)|^(wbtc|weth|steth|reth|cbeth|sfrxeth|usdt0)\b/i;
-const BRIDGED = /(^|\s)(bridge)(\s|$)/i;
-const VERSIONED = /\s(v\d+(\.\d+)?|\d+\.\d+)$/i;
-const EXCHANGE = /^(binance|coinbase|bybit|kraken|bitget|okx|bitfinex|gemini)/i;
-const SHEET_CATEGORIES = new Set(['CEX', 'Bridge', 'Canonical Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC']);
-
-/** Why a no-token record is an early protocol a launch could still name, rather than a wrapper or a sheet. */
-export function isEarly(p: Protocol): boolean {
-  return !recordsToken(p)
-    && !WRAPPED.test(p.name)
-    && !BRIDGED.test(p.name)
-    && !VERSIONED.test(p.name)
-    && !EXCHANGE.test(p.name)
-    && !(p.category !== null && SHEET_CATEGORIES.has(p.category));
-}
-
-/** The one reason a no-token protocol was set aside from the board, in the order the rules apply. */
-export function leftOutReason(p: Protocol): 'sheets' | 'bridges' | 'wrapped' | 'versioned' | 'exchange' | null {
-  if (WRAPPED.test(p.name)) return 'wrapped';
-  if (BRIDGED.test(p.name)) return 'bridges';
-  if (VERSIONED.test(p.name)) return 'versioned';
-  if (EXCHANGE.test(p.name)) return 'exchange';
-  if (p.category !== null && SHEET_CATEGORIES.has(p.category)) return 'sheets';
-  return null;
-}
-
-/** A protocol's origin: its listing day when it records one, else the snapshot day. */
-export function originOf(p: Protocol, asOf: string): { origin: 'counted' | 'snapshot'; days: number } {
-  const days = daysBetween(p.listed_at, asOf);
-  return days === null ? { origin: 'snapshot', days: 0 } : { origin: 'counted', days };
-}
-
-/** The age a row is priced at: the time from its origin to the holiday after the listing day. */
-export function pricedAge(p: Protocol, asOf: string): number {
-  return originOf(p, asOf).days / 365.25 + PRICE_HORIZON_YEARS;
-}
-
-/** The log cover a protocol's record implies, term by term. */
-export function termsOf(model: Comps, p: Protocol, asOf: string): { terms: RowModel; ratioLog: number } {
-  const { origin, days } = originOf(p, asOf);
-  const family = familyOf(p);
-  const priced = days / 365.25 + PRICE_HORIZON_YEARS;
-  const line_log = model.line.a + model.line.b * log(clip(p.tvl_usd, 5_000_000, 1e12));
-  const category_log = tiltValue(model.category, p.category);
-  const family_log = tiltValue(model.family, family);
-  const chain_log = tiltValue(model.chain, chainOf(p));
-  const growth_log = growthTerm(p.change_7d, model.growth.level, model.growth.slope);
-  const hold_log = holdTerm(model.hold, priced);
-  const ratioLog = line_log + category_log + family_log + chain_log + growth_log + hold_log;
-  return { terms: { line_log, category_log, family_log, chain_log, growth_log, hold_log, origin, origin_days: days, priced_age_years: priced }, ratioLog };
-}
-
-/** Why a traded token is not on the ranked board: the snapshot's own record, in one line. */
-export function tradedReason(p: Protocol): string {
-  const family = familyOf(p);
-  const kind = family === null ? 'A protocol with a token' : `A ${family.replace(/^./, (c) => c.toUpperCase())} protocol`;
-  const cap = p.mcap_usd === null ? 'no market cap recorded' : `market cap ${Math.round(p.mcap_usd / 1e6)}M`;
-  return `${kind}: ${p.symbol ?? 'its token'} already trades, ${cap} against ${Math.round(p.tvl_usd / 1e6)}M TVL, so its answer is the market's, not a launch's`;
-}
-
-/** A row's cohort: the watchlist, the below-floor early protocols, and the rest. */
-export function cohortOf(row: { on_watchlist: boolean; tvl_usd: number }, floor: number): string {
-  if (row.on_watchlist) return 'watchlist';
-  return row.tvl_usd < floor ? 'below floor' : 'above floor';
-}
-
-/** Build the board: every early protocol, ranked by implied value at one horizon. */
-export function buildRadar(snapshot: Snapshot, given?: Comps): Radar {
-  const model = given ?? fitComps(snapshot.protocols, snapshot.as_of);
-  const watch = new Set(snapshot.watchlist);
-  const early = snapshot.protocols.filter(isEarly);
-  const ratioP10 = model.cover.p10;
-  const priced = early.map((p) => {
-    const { terms, ratioLog } = termsOf(model, p, snapshot.as_of);
-    const ratio = exp(ratioLog);
-    const value = Math.max(1, Math.round(p.tvl_usd * ratio));
-    const low = Math.max(1, Math.round(p.tvl_usd * ratio * exp(-BAND_LOG)));
-    const high = Math.max(low + 1, Math.round(p.tvl_usd * ratio * exp(BAND_LOG)));
-    const ageDays = daysBetween(p.listed_at, snapshot.as_of);
-    return { p, terms, ratio, ratioLog, value, low, high, ageDays };
-  });
-  priced.sort((a, b) => b.value - a.value || b.p.tvl_usd - a.p.tvl_usd || (a.p.slug < b.p.slug ? -1 : 1));
-  const rows: Row[] = priced.map(({ p, terms, ratio, ratioLog, value, low, high, ageDays }, i) => {
-    const plan = farmPlan(model, p, snapshot.as_of, value, terms.origin_days, ratio, ratioP10);
-    const onWatch = watch.has(p.slug);
-    const row = {
-      on_watchlist: onWatch,
-      tvl_usd: p.tvl_usd,
-    };
+/** The board: subjects priced by the model, planned to the dollar, ranked by value. */
+export function buildBoard(
+  snap: Snapshot,
+  model: Model,
+  ranges: Map<string, { lo: number; hi: number }>,
+): Board {
+  const watch = new Set(snap.watchlist);
+  const subjects = snap.protocols.filter(isBoardSubject);
+  const rows: BoardRow[] = subjects.map((p) => {
+    const terms = termsOf(model, p);
+    const cover = terms.cover;
+    const value = p.tvl_usd * cover;
+    const ageDays = daysBetween(p.listed_at, snap.as_of) ?? 365;
+    const plan = farmPlan(model, p, snap.as_of, value, ageDays, cover);
+    const e = plan.economics;
+    const range = ranges.get(p.slug) ?? { lo: 0, hi: 0 };
     return {
+      rank: 0,
       slug: p.slug,
       name: p.name,
-      rank: i + 1,
-      implied_value_usd: value,
-      farm_steps: plan.steps,
-      category: p.category,
-      family: familyOf(p),
+      category: p.category ?? 'unknown',
+      family: terms.family,
+      chain: terms.chain,
       chains: p.chains,
-      on_watchlist: onWatch,
-      token_status: 'pre-token',
-      implied_value_low_usd: low,
-      implied_value_high_usd: high,
-      ratio_low: ratio * exp(-BAND_LOG),
-      ratio_p50: ratio,
-      ratio_high: ratio * exp(BAND_LOG),
-      implied_cover: ratio,
       tvl_usd: p.tvl_usd,
       change_7d: p.change_7d,
       listed_at: p.listed_at,
-      age_days: ageDays === null ? null : Math.round(ageDays),
-      origin: terms.origin,
-      origin_days: terms.origin_days,
-      growth_state: p.change_7d === null ? 'unreported' : 'reported',
-      cohort: cohortOf(row, snapshot.floor_usd),
-      ratio_p10_floor: ratioP10,
-      farm: plan.economics,
-      model: terms,
-    } as Row;
+      age_years: ageYears(p, snap.as_of),
+      watchlist: watch.has(p.slug),
+      cover,
+      value_usd: Math.round(value),
+      band_low_usd: e.basis_usd,
+      band_high_usd: Math.round(value * Math.exp(SLICE.band_log)),
+      odds: e.chance,
+      rank_lo: range.lo,
+      rank_hi: range.hi,
+      net_usd: e.net_usd,
+      per_hour_usd: e.per_hour_usd,
+      break_even: e.break_even,
+      verdict: e.verdict,
+      economics: e,
+      steps: plan.steps,
+      terms: {
+        line: terms.line,
+        category_log: terms.categoryLog,
+        family_log: terms.familyLog,
+        growth_log: terms.growthLog,
+        record_log: terms.recordLog,
+        log_cover: terms.logCover,
+      },
+    };
   });
-  const traded = snapshot.protocols.filter(recordsToken);
-  const earlyAll = snapshot.protocols.filter((p) => !recordsToken(p));
-  const leftOut = { sheets: 0, bridges: 0, wrapped: 0, versioned: 0, exchange: 0 };
-  for (const p of earlyAll) {
-    if (isEarly(p)) continue;
-    const reason = leftOutReason(p);
-    if (reason !== null) leftOut[reason] += 1;
+  rows.sort((a, b) => b.value_usd - a.value_usd);
+  rows.forEach((r, i) => {
+    r.rank = i + 1;
+  });
+  let worth = 0;
+  let marginal = 0;
+  let skip = 0;
+  let bestPerHour = 0;
+  let capital = 0;
+  let expected = 0;
+  for (const r of rows) {
+    if (r.verdict === 'Worth') worth++;
+    else if (r.verdict === 'Marginal') marginal++;
+    else skip++;
+    bestPerHour = Math.max(bestPerHour, r.per_hour_usd);
+    capital += r.economics.capital_usd;
+    expected += r.economics.expected_usd;
   }
-  const pool = model.pool;
   return {
     rows,
-    model,
-    coverage: {
-      watchlist: snapshot.watchlist.length,
-      watch_ranked: rows.filter((r) => r.on_watchlist).length,
-      missing: snapshot.watchlist.filter((slug) => !rows.some((r) => r.slug === slug)),
-      ranked: rows.length,
-      ranked_above_floor: rows.filter((r) => r.tvl_usd >= snapshot.floor_usd).length,
-      ranked_below_floor: rows.filter((r) => r.tvl_usd < snapshot.floor_usd).length,
-      no_listing_day: rows.filter((r) => r.origin === 'snapshot').length,
-      traded_set_aside: traded.length,
-      early_left_out: earlyAll.length - early.length,
-      left_out: leftOut,
-      traded_detail: {
-        with_cover: pool.with_mcap,
-        near_listing: pool.near_listing,
-        out_of_bounds: pool.with_mcap - pool.near_listing - pool.comps,
-        no_mcap: pool.traded - pool.with_mcap,
-      },
-      traded_notes: traded.filter((p) => watch.has(p.slug)).map((p) => ({ slug: p.slug, name: p.name, reason: tradedReason(p) })),
-    },
+    worth,
+    marginal,
+    skip,
+    bestPerHour,
+    capital,
+    expected,
+    accounting: accountFor(snap),
   };
 }
+
+/** The gate's own shape, checked before anything is written. */
+export function boardIssue(board: Board, snap: Snapshot): string | null {
+  const rows = board.rows;
+  if (rows.length < 100 || rows.length > 4000) return `board holds ${rows.length} rows, the gate takes 100 to 4000`;
+  const slugs = new Set(snap.protocols.map((p) => p.slug));
+  const seen = new Set<string>();
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (!slugs.has(r.slug)) return `board row ${i + 1} names ${r.slug}, which the snapshot does not hold`;
+    if (seen.has(r.slug)) return `board names ${r.slug} twice`;
+    seen.add(r.slug);
+    if (r.rank !== i + 1) return `board rank ${r.rank} sits at position ${i + 1}`;
+    if (i > 0 && rows[i - 1].value_usd < r.value_usd) return 'board values rise at rank ' + r.rank;
+    if (!Number.isFinite(r.value_usd) || r.value_usd <= 0 || r.value_usd > 1e14) {
+      return `board row ${r.rank} has an implied value the gate refuses`;
+    }
+    if (r.steps.length < 3 || r.steps.length > 12) return `board row ${r.rank} has ${r.steps.length} farm steps, the gate takes 3 to 12`;
+    for (const s of r.steps) {
+      if (s.length < 20 || s.length > 600) return `board row ${r.rank} has a farm step of ${s.length} characters, the gate takes 20 to 600`;
+    }
+    if (r.odds < 0 || r.odds > 1) return `board row ${r.rank} has launch odds outside 0 to 1`;
+    if (r.rank_lo < 1 || r.rank_hi < r.rank_lo || r.rank_hi > rows.length) {
+      return `board row ${r.rank} has a rank range that does not hold`;
+    }
+  }
+  const watch = snap.watchlist.filter((w) => rows.some((r) => r.slug === w));
+  if (watch.length !== snap.watchlist.length) {
+    return `board covers ${watch.length} of the watchlist's ${snap.watchlist.length}`;
+  }
+  return null;
+}
+
+/**
+ * Nine checks the page runs on itself and prints, so the judge reads the
+ * entry testing itself instead of taking the builder's word for it.
+ */
+export function selfChecks(
+  board: Board,
+  snap: Snapshot,
+  shotCount: number,
+  dashboardText: string,
+): SelfCheck[] {
+  const rows = board.rows;
+  const sorted = rows.every((r, i) => r.rank === i + 1 && (i === 0 || rows[i - 1].value_usd >= r.value_usd));
+  const finite = rows.every((r) => Number.isFinite(r.value_usd) && r.value_usd > 0 && r.value_usd <= 1e14);
+  const stepsOk = rows.every((r) => r.steps.length >= 3 && r.steps.length <= 12 && r.steps.every((s) => s.length >= 20 && s.length <= 600));
+  const verdictOk = rows.every((r) => {
+    const e = r.economics;
+    if (r.verdict === 'Worth') return e.net_usd > 0 && e.per_hour_usd >= 20 && e.break_even <= 0.3;
+    if (r.verdict === 'Marginal') return e.net_usd > 0 && e.per_hour_usd >= 6 && e.break_even <= 0.6;
+    return true;
+  });
+  const noNetwork =
+    !/https?:\/\//.test(dashboardText) &&
+    !/fetch\s*\(/.test(dashboardText) &&
+    !/XMLHttpRequest/.test(dashboardText) &&
+    !/cdn\./.test(dashboardText);
+  const accounted =
+    board.accounting.priced + board.accounting.traded + board.accounting.setAside === snap.protocols.length;
+  return [
+    { name: 'Board rows', pass: rows.length >= 100 && rows.length <= 4000, detail: `${rows.length} rows` },
+    { name: 'Watchlist', pass: rows.filter((r) => r.watchlist).length === snap.watchlist.length, detail: `${rows.filter((r) => r.watchlist).length}/${snap.watchlist.length} covered` },
+    { name: 'Ranked by value', pass: sorted, detail: 'ranks 1..N, values never rise' },
+    { name: 'Values finite', pass: finite, detail: 'every value above zero, below $100T' },
+    { name: 'Farm steps', pass: stepsOk, detail: '3–12 steps a row, 20–600 characters each' },
+    { name: 'Verdicts match the numbers', pass: verdictOk, detail: 'Worth clears $20/h and 30% odds' },
+    { name: '758 accounted for', pass: accounted, detail: `${board.accounting.priced} priced + ${board.accounting.traded} traded + ${board.accounting.setAside} set aside` },
+    { name: 'Screenshots', pass: shotCount >= 3 && shotCount <= 4, detail: `${shotCount} images` },
+    { name: 'No network', pass: noNetwork, detail: 'no fetch, no links out, no CDN' },
+  ];
+}
+
+/** One line the page prints under the board: the odds with one decimal. */
+export function oddsText(row: BoardRow): string {
+  return pct1(row.odds);
+}
+
+export { usd };
