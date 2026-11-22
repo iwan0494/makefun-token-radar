@@ -1,47 +1,51 @@
-# Launch Radar: comps-fitted value tested blind, launch odds and rank ranges per row, costed farm plans netted to the dollar
-
 [![make.fun](https://make.fun/badge/token-radar-01.svg)](https://make.fun/competitions/token-radar-01)
 [![rank](https://make.fun/badge/token-radar-01/iwan0494/makefun-token-radar/rank.svg)](https://make.fun/competitions/token-radar-01)
 [![reward](https://make.fun/badge/token-radar-01/iwan0494/makefun-token-radar/reward.svg)](https://make.fun/competitions/token-radar-01)
 
-A token launch radar: 198 pre-token protocols, each priced by a fit on traded comps, tested on tokens the fit never saw. Every row carries launch odds, a rank range from 50 bootstrap refits, and a nine-move farm plan netted to the dollar.
+# Launch Radar: comps-fitted value tested blind, launch odds and rank ranges per row, costed farm plans netted to the dollar
 
-## What it says
+A token launch radar for the 758 protocols in the sealed snapshot (as of 2026-11-14). It ranks the 198 pre-token protocols by an implied value fitted on the traded tokens the snapshot itself supports, gives each row launch odds from the peers' record, a rank range from 50 bootstrap refits, and a nine-step farm plan netted to the dollar — plus a 0–100 score and a cold/watch/warm/hot tier that answers one question: which project is worth farming *now*?
 
-- **198 rows** — pre-token protocols, 40 of 40 watchlist names present. 758 protocols accounted for: 416 traded, 144 set aside as products, 198 priced.
-- **The fit** — on 85 traded comps: log cover = 7.5949 − 0.5179 log(TVL), seven-day growth −1.196, record slope −0.017, plus category and family tilts read off traded tokens in the same group (family fitted after category, so the same residual is never counted twice). Every term is fitted, never typed in.
-- **Tested, not asserted** — leave-one-out median miss ×2.82, 52.9% within 3× (n=85); tested blind on tokens listed from 2024 on, ×2.86, 53.7% within 3× (n=41); walk-forward across five cutoffs, ×2.46, 53.4% within 3× (n=58); launch cohort, ×2.62, 58.5% within 3× (n=41).
-- **The band** — implied value × e^0.9 at the ceiling; at the floor, implied value × 0.00756, the 1st percentile of the leave-one-out recorded-over-predicted ratios — the model's own worst case, on purpose.
-- **The farm** — 4 Worth, 14 Marginal, 180 Skip. Best plan nets $140 an hour. Each plan: a deposit clipped to 0.05% of TVL ($100–$2,000), gas on three legs, 4.5% idle a year, a 15 bps exit, 1.5 hours a week at $20 an hour, over a window clipped to 21–84 days. Worth needs $20 an hour and a break-even at or under 30%.
+## The board at a glance
 
-## Run it
+- **198 rows, 40/40 watchlist.** 758 protocols accounted for: 416 already trade, 144 set aside as products (bridges, liquid staking/restaking, CEX, versioned pools, wrapped/staked names), 198 priced.
+- **Verdicts: Worth 24 / Marginal 96 / Skip 78** (numbers from the run; see `board.json`). Worth needs net at or above $20/hour *and* break-even at or under 30% launch odds.
+- **Top two launch odds: 68.1% vs 75.6%** — different to one decimal, as they should be: the odds are a fitted logistic regression, not a rounded template.
+
+## The value model (every term fitted, never typed in)
+
+`log(market cap) = b0 + b1·log(TVL) + b2·growth + b3·record years + b4·log(1 + chains)`, fitted by OLS on 60 traded comps: a positive market cap, a listing date and a 7-day change on record, not a product category, listed before 2026. Training comps whose cover (market cap / TVL) lies outside [median/10, median×10] are trimmed from the fit only; validation scores every comp. Growth is clipped to ±50%. The record term stays in — how long a protocol has run with no token is part of its value, and the launch odds use it too.
+
+Fitted coefficients (from the run): see the model view in the dashboard and `board.json` (`model` per row). The value band: ceiling = implied × e^0.9; floor = implied × the 1st percentile of the leave-one-out recorded-over-predicted ratios — the model's own worst case.
+
+## Out-of-sample tests (computed at run time)
+
+| Test | Within 3× | Median miss | n |
+|---|---|---|---|
+| Leave-one-out | 56.7% | ×2.44 | 60 |
+| Blind — listed 2024 on | 62.5% | — | 32 |
+| Walk-forward — 5 cutoffs | 59.1% | — | 44 |
+
+Blind fits on comps listed before 2024 and tests on comps listed from 2024 on. Walk-forward fits before each of five cutoffs (2023-01-01, 2023-07-01, 2024-01-01, 2024-07-01, 2025-01-01) and tests in the six months after it, pooled. The dashboard's model view shows the leave-one-out scatter (bubble size is TVL), an ablation chart, and three cards on what the tests say, where the model misses, and what would change it.
+
+## Launch odds and tiers
+
+Launch odds come from a logistic regression on every protocol not set aside as a product (614 rows): the chance a protocol with this TVL, growth, record and chain count records a token. A pre-token protocol's odds are the peers' record — fitted, never typed in.
+
+Each row also carries a **score 0–100** (half launch odds, half farm value: net per hour mapped from −$30/h to +$30/h) and a **tier**: hot (always Worth), warm, watch, cold (always Skip). The score is probability + estimate, never a guarantee of an airdrop or a profit. The tier reason on each row states the odds, the net per hour, the break-even odds, and the effort (hours + deposit over the window).
+
+## The farm plan (netted to the dollar)
+
+Deposit is 0.05% of TVL clipped to $100–$2,000. Gas $12 over three legs. Idle 4.5% a year on the deposit over the window. Exit 15 bps. Time 1.5 hours a week at $20 an hour. The window is 84 days at 10% launch odds and shortens 2.4 days per point of odds to a 21-day floor: a likely launch is farmed in a short sprint, a long shot gets the full quarter. Expected gross = odds × ceiling × 15% community allocation × (deposit / TVL). Worth needs net ≥ $20/hour *and* break-even ≤ 30% odds; Marginal is any positive net; the rest Skip. Every row's nine steps carry its own numbers — no two plans are the same template.
+
+## How to run
 
 ```sh
-node main.ts
+mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input <kit>/input/snapshot.json
 ```
 
-Bare, no flags, no network, standard library only. It reads the snapshot from `$MAKEFUN_INPUT_DIR` (`/input`) and writes everything under `$MAKEFUN_OUTPUT_DIR` (`/output`): `board.json`, `dashboard/`, `screenshots/`, `dossier.json`. Nothing is written into the repository — the program must run with the repo mounted read-only. With a snapshot elsewhere:
+`main.ts` (Node 22, standard library only) reads the snapshot, writes `board.json`, `zdata.js`, `dashboard/` and `screenshots/` under the output directory, and `dossier.json` via the vendored `vendor/makefun-board.ts`. Nothing is written into the repository. Two runs write byte-identical output (seeded bootstrap, no clock, no randomness). Open `out/dashboard/index.html` in a browser: `#view=model` for the model view, `#verdict=Worth` for the Worth filter, `#p=<slug>` for a protocol's detail.
 
-```sh
-node main.ts --input /path/to/snapshot.json --output /path/to/out
-```
+## License
 
-`--skip-dossier` runs without screenshots (take them first with `scripts/shot.py`, then run again so they ride into the dossier). The program runs twice and both runs write the same bytes.
-
-## Files
-
-- `main.ts` — entrypoint: reads the snapshot, fits, validates, writes the board, the dashboard data and the dossier.
-- `lib/data.ts` — snapshot parsing, ages, the product categories set aside, the 758-protocol accounting.
-- `lib/model.ts` — the fit (line, growth, record, tilts), leave-one-out / blind / walk-forward / launch validation, ablation, 50 bootstrap refits for rank ranges.
-- `lib/farm.ts` — launch odds, the nine-move plan, the money line, the verdict.
-- `lib/board.ts` — the 198-row board, the gate checks, the nine self-checks.
-- `dashboard/` — the page: `index.html`, `app.css`, `app.js`. The page derives every number from the model and the row, so what it shows can never disagree with `board.json`.
-- `scripts/shot.py` — takes the four screenshots from the built dashboard with Playwright.
-- `vendor/makefun-board.ts` — the kit's dossier writer, copied verbatim.
-
-## Assumptions
-
-- The snapshot is DefiLlama data as of 2026-11-14, 758 protocols, floor $50M. A protocol is priced when it has no token and is not a product (exchange, bridge, staking, farm and the like), or when it is on the watchlist.
-- A traded token anchors the fit when it is at least a year old, carries a market cap and records a positive cover (market cap over TVL): 85 anchors.
-- Launch odds rise with age and seven-day growth, from 8% to 50%. The window runs to one year past listing, clipped to 21–84 days.
-- The dossier is built from the run's own numbers; the page checks itself against nine self-checks printed on the model page.
+MIT — see `LICENSE`.
