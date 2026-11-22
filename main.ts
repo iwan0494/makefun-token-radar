@@ -1,16 +1,22 @@
-// Token Radar R6 — main.ts at the root of the repository.
+// Launch Radar R6 — a token launch radar (Node 22, standard library only).
 //
-// Reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), scores every
-// pre-token protocol with the comps-fitted model in lib/model.ts, writes the ranked board to
-// /output/board.json, writes the dashboard's data to /output/zdata.js, copies dashboard/ and
-// screenshots/ to /output, and writes /output/dossier.json with the vendored make.fun library.
+// The program reads the sealed snapshot from /input/snapshot.json (or
+// --input <file|dir>), fits the comps model in lib/model.ts at runtime,
+// writes the ranked board to /output/board.json, and copies this
+// repository's dashboard/ and screenshots/ to /output. Last, it writes
+// /output/dossier.json, the summary the judge reads, with the vendored
+// make.fun library.
 //
-// Every write goes under the output directory (MAKEFUN_OUTPUT_DIR or --output). Nothing is ever
-// written into this repository: the grader mounts it read-only, and a write there is an exit 1.
-// Deterministic: two runs write byte-identical output (seeded bootstrap, no clock, no randomness).
+// The dashboard is a static page, no framework and no network:
+// dashboard/index.html, dashboard/app.css and dashboard/app.js read
+// /output/data.js, which this program writes from the same board.
 //
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
+//
+// Nothing is written anywhere but the output directory: the repository the
+// program runs from stays read-only, so a grader re-run reproduces the
+// same bytes.
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,7 +26,7 @@ import { buildDossier } from './vendor/makefun-board.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 
-/** The scorer's own caps (reference/gate.json): the text cap shapes the bytes, the rest refuse. */
+/** The scorer's own caps: the text cap shapes the bytes, the rest refuse. */
 const TEXT_MAX_BYTES = 65_536;
 const SCREENSHOT_CAPS = { max: 4, max_bytes: 524_288 };
 const IMAGE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
@@ -28,7 +34,7 @@ const IMAGE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
 /** --name <value> out of the arguments, or the fallback. */
 function arg(name: string, fallback: string): string {
   const at = process.argv.indexOf(`--${name}`);
-  if (at >= 0 && at + 1 < process.argv.length) return process.argv[at + 1] as string;
+  if (at >= 0 && at + 1 < process.argv.length) return process.argv[at + 1]!;
   const withEquals = process.argv.find((a) => a.startsWith(`--${name}=`));
   return withEquals === undefined ? fallback : withEquals.slice(name.length + 3);
 }
@@ -42,7 +48,7 @@ if (!existsSync(inputFile)) {
 const out = arg('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
 
 const snapshot = parseSnapshot(readFileSync(inputFile, 'utf8'));
-const { board, radar } = buildRadar(snapshot);
+const { board, radar, beta, validation } = buildRadar(snapshot);
 const issue = boardIssue(board, snapshot);
 if (issue !== null) {
   process.stderr.write(`token radar: the model wrote a board the gate refuses: ${issue}\n`);
@@ -51,7 +57,7 @@ if (issue !== null) {
 
 mkdirSync(out, { recursive: true });
 writeFileSync(join(out, 'board.json'), `${JSON.stringify({ rows: board })}\n`);
-writeFileSync(join(out, 'zdata.js'), dataScript(radar));
+writeFileSync(join(out, 'data.js'), dataScript(radar));
 
 /** Copy one directory's regular files into `to`, skipping names that start with a dot. */
 function copyFiles(from: string, to: string): string[] {
@@ -84,11 +90,11 @@ for (const name of shots) {
 // The dossier is written last: the scorer rebuilds it from this /output and compares bytes.
 writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: { max_files: 400, max_bytes: 4_194_304 } }));
 
-const v = radar.verdicts;
+const pct = (v: { within: number; n: number }): string => `${v.within}/${v.n} (${((v.within / v.n) * 100).toFixed(1)}%)`;
 process.stdout.write(
-  `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.counts.priced} priced, ${radar.counts.set_aside} set aside as products, ${radar.counts.traded} already trade)\n` +
-    `token radar: value model log(mcap) = ${radar.beta.join(' + ')} on [1, log TVL, growth, record years, log1p chains]\n` +
-    `token radar: LOO within 3x ${radar.loo.within3Pct.toFixed(1)}% (n=${radar.loo.n}, median miss x${radar.loo.medianMiss.toFixed(2)}) | blind ${radar.blind.within3Pct.toFixed(1)}% (n=${radar.blind.n}) | walk-forward ${radar.walk_forward.within3Pct.toFixed(1)}% (n=${radar.walk_forward.n})\n` +
-    `token radar: verdicts Worth ${v.worth} / Marginal ${v.marginal} / Skip ${v.skip}; top odds ${board[0].launch_odds_pct.toFixed(1)}% vs ${board[1].launch_odds_pct.toFixed(1)}%\n` +
-    `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'zdata.js')}, ${join(out, 'dashboard')}, ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
+  `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside, ${radar.setaside_size} pre-token set aside)\n` +
+    `token radar: comps fit n=${radar.comps_n} log(mcap) = ${beta.intercept.toFixed(4)} + ${beta.log_tvl.toFixed(4)}*log(TVL) + ${beta.growth.toFixed(4)}*growth + ${beta.record_years.toFixed(4)}*recordYears ${beta.log_chains.toFixed(4)}*log(1+chains)\n` +
+    `token radar: validation LOO within 3x ${pct(validation.loo)} median miss x${validation.loo.median_miss.toFixed(2)}; blind ${pct(validation.blind)}; walk-forward ${pct(validation.walk_forward)}\n` +
+    `token radar: tiers Worth ${radar.tiers.worth} / Marginal ${radar.tiers.marginal} / Skip ${radar.tiers.skip}; top-2 odds ${board[0]!.odds_pct.toFixed(1)}% vs ${board[1]!.odds_pct.toFixed(1)}%\n` +
+    `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')}, ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );
